@@ -24,6 +24,7 @@ redémarre la nouvelle version et supprime l'ancienne. **La session Epic est con
 
 ## Fonctionnalités
 
+- Demande de connexion au démarrage quand aucune session n'est enregistrée.
 - Connexion Epic par code d'activation (aucun mot de passe stocké).
 - Jetons de session chiffrés avec DPAPI, restauration automatique au démarrage.
 - Lancement de Fortnite via Epic Games Launcher, en ligne ou en mode privé.

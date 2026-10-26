@@ -31,11 +31,11 @@ recompiler :
 Sinon, modifier `DefaultRepo` dans
 [UpdateService.cs](FNHybridLauncher/UpdateService.cs) avant de compiler.
 
-## Publier une version (exemple V1.1)
+## Publier une version (exemple V1.2)
 
 1. Dans [AppInfo.cs](FNHybridLauncher/AppInfo.cs), incrémenter :
-   - `Version = "1.1"` (affiché « V1.1 »)
-   - `VersionTag = "v1.1.0"` (comparé aux tags GitHub)
+   - `Version = "1.2"` (affiché « V1.2 »)
+   - `VersionTag = "v1.2.0"` (comparé aux tags GitHub)
 2. Compiler :
 
    ```bat
@@ -44,7 +44,7 @@ Sinon, modifier `DefaultRepo` dans
    ```
 
 3. Sur GitHub : **Releases → Draft a new release**
-   - tag : `v1.1.0` (doit être **supérieur** au tag de la version installée) ;
+   - tag : `v1.2.0` (doit être **supérieur** au tag de la version installée) ;
    - joindre l'exe produit (`X.HYBRID V1.exe`). N'importe quel fichier `.exe`
      fonctionne ; ceux contenant « x.hybrid » dans le nom sont préférés ;
    - publier la release (pas en brouillon).

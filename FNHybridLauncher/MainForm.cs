@@ -125,6 +125,8 @@ namespace FNHybrid
                 if (Environment.GetEnvironmentVariable("XHYBRID_PREVIEW") == null)
                 {
                     RestoreSessionIfAny();
+                    // aucune session enregistrée : on demande explicitement la connexion
+                    if (_login == null && _accounts.Find(_accounts.ActiveId) == null) ShowLoginPrompt();
                     CheckForUpdates();
                 }
                 if (_prefs.OpenConsoleOnStart) OpenMini(MiniWindow.Kind.Console, DefaultAnchor());
@@ -694,24 +696,24 @@ namespace FNHybrid
             float btnW = Math.Min(SF(400), panel.Width - S(140));
             var btn = new RectangleF(panel.X + (panel.Width - btnW) / 2f, panel.Y + panel.Height * 0.748f, btnW, S(52));
 
-            if (_privateOn && !on)
-                PaintPrimary(g, btn, S("SE CONNECTER", "SIGN IN"), "user", "home:login", true, delegate { StartLogin(false); });
+            if (!on)
+                PaintPrimary(g, btn, S("SE CONNECTER POUR JOUER", "SIGN IN TO PLAY"), "user", "home:login", true, delegate { StartLogin(false); });
             else if (_privateOn)
                 PaintPrimary(g, btn, S("JOUER (SERVEUR PRIVÉ)", "PLAY (PRIVATE SERVER)"), "gamepad", "home:play", true, LaunchGame);
             else
                 PaintPrimary(g, btn, S("JOUER EN LIGNE", "PLAY ONLINE"), "gamepad", "home:play", true, LaunchGame);
 
             string sub;
-            if (!_privateOn)
+            if (!on)
+                sub = S("Connexion sécurisée Epic Games · aucun mot de passe stocké", "Secure Epic Games sign-in · no password stored");
+            else if (!_privateOn)
                 sub = S("⇄ Mode en ligne · ton compte Epic Games · vraies parties (Créatif, BR…)",
                         "⇄ Online mode · your Epic Games account · real matches (Creative, BR…)");
-            else if (on)
+            else
                 sub = (_serverRunning ? S("Serveur privé en ligne", "Private server online")
                                       : S("Serveur privé arrêté", "Private server offline"))
                       + " · " + S("⇄ mode privé : casier et boutique, pas de partie",
                                   "⇄ private mode: locker and shop, no match");
-            else
-                sub = S("Connexion sécurisée Epic Games · aucun mot de passe stocké", "Secure Epic Games sign-in · no password stored");
 
             var subRect = new RectangleF(panel.X + S(40), btn.Bottom + S(18), panel.Width - S(80), S(18));
             Theme.Text(g, sub, U(8.4f), Theme.Dim2, subRect,
@@ -805,6 +807,33 @@ namespace FNHybrid
 
                 var cancel = new RectangleF(cx - S(100), copy.Bottom + S(68), S(200), S(36));
                 PaintGhost(g, cancel, S("ANNULER", "CANCEL"), "close", "login:cancel", true, CancelLogin);
+            }
+            else if (_phase == LoginPhase.Idle)
+            {
+                var msg = new RectangleF(panel.X + S(56), panel.Y + panel.Height * 0.31f,
+                    panel.Width - S(112), S(58));
+                Theme.Text(g, S("Connecte-toi à Epic Games pour jouer et retrouver ton compte.",
+                    "Sign in to Epic Games to play and load your account."),
+                    U(10.4f), Theme.Ink, msg, StringAlignment.Center, StringAlignment.Center, true);
+
+                var hint = new RectangleF(panel.X + S(56), msg.Bottom + S(2), panel.Width - S(112), S(20));
+                Theme.Text(g, S("Aucune session enregistrée sur ce PC.", "No saved session on this PC."),
+                    U(8.4f), Theme.Dim2, hint, StringAlignment.Center, StringAlignment.Center, false);
+
+                var start = new RectangleF(cx - S(190), panel.Y + panel.Height * 0.52f, S(380), S(50));
+                PaintPrimary(g, start, S("SE CONNECTER AVEC EPIC", "SIGN IN WITH EPIC"), "user", "login:start", true,
+                    delegate { StartLogin(false); });
+
+                var later = new RectangleF(cx - S(110), start.Bottom + S(12), S(220), S(38));
+                PaintGhost(g, later, S("PLUS TARD", "LATER"), "arrow-left", "login:later", true,
+                    delegate
+                    {
+                        _phase = LoginPhase.Idle;
+                        _view = View.Home;
+                        _loginError = "";
+                        Status("");
+                        Invalidate();
+                    });
             }
             else
             {
@@ -1633,6 +1662,19 @@ namespace FNHybrid
             });
         }
 
+        // Demande de connexion affichée au démarrage quand aucun compte n'est enregistré.
+        void ShowLoginPrompt()
+        {
+            if (_login != null) return;
+            _view = View.Login;
+            _phase = LoginPhase.Idle;
+            _device = null;
+            _loginError = "";
+            _profileOpen = false;
+            Status(S("Connecte-toi à Epic Games pour continuer.", "Sign in to Epic Games to continue."));
+            Invalidate();
+        }
+
         void CancelLogin()
         {
             _loginGen++;
@@ -1978,7 +2020,8 @@ namespace FNHybrid
         void LaunchGame()
         {
             if (_launching) return;
-            if (_privateOn && _login == null)
+            // pas de session : on demande la connexion avant de lancer le jeu
+            if (_login == null)
             {
                 StartLogin(false);
                 return;
@@ -2675,6 +2718,10 @@ namespace FNHybrid
                     _login.AccountId = "0e3c9a1f6d4b47f6a9f4f2a1b7c3d5e9";
                     _login.DisplayName = "Solo Servat";
                     _view = View.Accounts;
+                    break;
+                case "loginprompt":
+                    _view = View.Login;
+                    _phase = LoginPhase.Idle;
                     break;
                 case "login":
                     _view = View.Login;

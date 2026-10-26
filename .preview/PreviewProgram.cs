@@ -201,6 +201,24 @@ namespace FNHybrid
                 var prefs = (LauncherPrefs)Field(f, "_prefs");
                 Check("préférences chargées", prefs != null, "");
 
+                // ---- aucune session : demande de connexion
+                f.ApplyPreview("loginprompt");
+                f.PaintOffscreen();
+                Check("écran de connexion demandé", Convert.ToString(Field(f, "_view")) == "Login",
+                    Convert.ToString(Field(f, "_view")));
+                Check("phase de demande de connexion", Convert.ToString(Field(f, "_phase")) == "Idle",
+                    Convert.ToString(Field(f, "_phase")));
+                Check("bouton Se connecter avec Epic", f.HasId("login:start"), "");
+                Check("bouton Plus tard", f.HasId("login:later"), "");
+                using (var bmp = f.RenderPreview()) bmp.Save(shots + "/loginprompt.png", ImageFormat.Png);
+                f.ClickId("login:later");
+                Check("Plus tard revient à l'accueil", Convert.ToString(Field(f, "_view")) == "Home",
+                    Convert.ToString(Field(f, "_view")));
+
+                // ---- accueil déconnecté : le bouton principal demande la connexion
+                f.PaintOffscreen();
+                Check("accueil déconnecté propose la connexion", f.HasId("home:login") && !f.HasId("home:play"), "");
+
                 // ---- plus de panneau de réglages : aucun engrenage
                 f.PaintOffscreen();
                 Check("aucun bouton engrenage", !f.HasId("title:gear"), "");
@@ -215,14 +233,14 @@ namespace FNHybrid
                     UpdateService.NormalizeRepo("https://github.com/SERVAT/X.HYBRID.git") == "SERVAT/X.HYBRID",
                     Convert.ToString(UpdateService.NormalizeRepo("https://github.com/SERVAT/X.HYBRID.git")));
 
-                string releaseJson = "{\"tag_name\":\"v1.1.0\",\"body\":\"Corrections et nouveau design.\"," +
+                string releaseJson = "{\"tag_name\":\"v1.2.0\",\"body\":\"Corrections et nouveau design.\"," +
                     "\"html_url\":\"https://github.com/\",\"assets\":[{\"name\":\"X.HYBRID V1.exe\"," +
                     "\"browser_download_url\":\"https://github.com/app.exe\",\"size\":500000}]}";
                 var upd = UpdateService.ParseRelease(releaseJson);
-                Check("release V1.1 détectée", upd != null && upd.Version == "1.1.0" &&
+                Check("release V1.2 détectée", upd != null && upd.Version == "1.2.0" &&
                     upd.AssetUrl.EndsWith(".exe"), upd == null ? "null" : upd.Version);
                 Check("release identique ignorée",
-                    UpdateService.ParseRelease(releaseJson.Replace("v1.1.0", "v1.0.0")) == null, "");
+                    UpdateService.ParseRelease(releaseJson.Replace("v1.2.0", "v1.1.0")) == null, "");
                 Check("release sans exe ignorée",
                     UpdateService.ParseRelease(releaseJson.Replace(".exe", ".zip")) == null, "");
 
