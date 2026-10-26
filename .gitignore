@@ -1,0 +1,29 @@
+# sorties de compilation
+FNHybridLauncher/bin/
+FNHybridLauncher/bin*/
+FNHybridLauncher/obj/
+FNHybridLauncher/binVerify 2/
+
+# harnais de test local
+.preview/bin/
+.preview/obj/
+.preview/shots/
+.preview/*.log
+
+# exe de release (joint aux releases GitHub)
+dist/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# journaux et données locales
+*.log
+
+# serveur tiers, données et sauvegardes locales
+LawinServer/
+start_server.bat
+backup-athena-avant-cosmetics.json
+EpicClients.md
+.freebuff/
