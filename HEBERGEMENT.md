@@ -3,8 +3,11 @@
 ## Ce qu'il faut héberger
 
 Le fichier **`X.HYBRID V1.exe`** (asset de la release) suffit : c'est **un seul exe**
-(BouncyCastle est embarqué dedans, aucune DLL à côté). Il nécessite
-**.NET Framework 4.8**, présent d'origine sur Windows 10 et 11.
+(~54 Mo). Il contient BouncyCastle, **le serveur privé LawinServer et le moteur
+Node.js** : au premier lancement, l'app les installe elle-même dans
+`%APPDATA%\FNHybrid\server` et `%APPDATA%\FNHybrid\node`. L'utilisateur n'a ni
+Node.js ni dossier serveur à préparer. Il nécessite **.NET Framework 4.8**,
+présent d'origine sur Windows 10 et 11.
 
 Téléchargement : https://github.com/tiktokservat7-stack/X.HYBRID/releases/latest
 
@@ -12,10 +15,12 @@ L'application demande l'élévation administrateur (fichier hosts + proxy SSL).
 Windows SmartScreen peut afficher un avertissement sur un exe non signé :
 « Informations complémentaires » → « Exécuter quand même ».
 
-Test rapide du fichier seul (retourne 0 si le chiffrement embarqué fonctionne) :
+Test rapide du fichier seul (retourne 0 si le chiffrement embarqué et le contenu
+serveur sont complets, 5 si le paquet embarqué manque) :
 
 ```bat
 "X.HYBRID V1.exe" --self-test
+"X.HYBRID V1.exe" --install-payload   :: installe le serveur, compte rendu dans %TEMP%\xhybrid-payload.txt
 ```
 
 ## Dépôt GitHub utilisé
@@ -31,22 +36,34 @@ recompiler :
 Sinon, modifier `DefaultRepo` dans
 [UpdateService.cs](FNHybridLauncher/UpdateService.cs) avant de compiler.
 
-## Publier une version (exemple V1.2)
+## Publier une version (exemple V1.3)
 
 1. Dans [AppInfo.cs](FNHybridLauncher/AppInfo.cs), incrémenter :
-   - `Version = "1.2"` (affiché « V1.2 »)
-   - `VersionTag = "v1.2.0"` (comparé aux tags GitHub)
-2. Compiler :
+   - `Version = "1.3"` (affiché « V1.3 »)
+   - `VersionTag = "v1.3.0"` (comparé aux tags GitHub)
+2. Regénérer le contenu embarqué (obligatoire après toute modification du serveur
+   ou de son dossier) :
+
+   ```bat
+   powershell -ExecutionPolicy Bypass -File tools\make-payload.ps1
+   ```
+
+   Si le serveur embarqué change, incrémenter aussi `ServerPayload.Version` dans
+   [ServerPayload.cs](FNHybridLauncher/ServerPayload.cs) : les installations qui
+   ont déjà le serveur le mettent alors à jour (profils et config conservés).
+3. Compiler :
 
    ```bat
    cd FNHybridLauncher
    dotnet build FNHybridLauncher.csproj -c Release -o bin/staging
    ```
 
-3. Sur GitHub : **Releases → Draft a new release**
-   - tag : `v1.2.0` (doit être **supérieur** au tag de la version installée) ;
-   - joindre l'exe produit (`X.HYBRID V1.exe`). N'importe quel fichier `.exe`
-     fonctionne ; ceux contenant « x.hybrid » dans le nom sont préférés ;
+4. Sur GitHub : **Releases → Draft a new release**
+   - tag : `v1.3.0` (doit être **supérieur** au tag de la version installée) ;
+   - joindre **`X.HYBRID V1.exe`**. N'importe quel fichier `.exe` fonctionne ;
+     ceux contenant « x.hybrid » dans le nom sont préférés ;
+   - joindre aussi **`dist/serveur-source.zip`** : l'exe distribue du code
+     GPL-3.0 (LawinServer), la release doit donc proposer ses sources ;
    - publier la release (pas en brouillon).
 
 Au lancement suivant, l'application interroge
@@ -91,4 +108,9 @@ est restaurée comme avant.
 - `FNHybridLauncher/UpdateService.cs` — dépôt, vérification, téléchargement,
   script de remplacement.
 - `FNHybridLauncher/UpdateWindow.cs` — fenêtre de proposition/progression.
+- `FNHybridLauncher/ServerPayload.cs` — installation du serveur embarqué dans
+  `%APPDATA%\FNHybrid` (version du paquet, données du joueur préservées).
+- `tools/make-payload.ps1` — fabrique `payload.zip` (serveur + Node) et
+  `dist/serveur-source.zip`.
 - `dist/X.HYBRID V1.exe` — fichier produit en local, joint à la release GitHub.
+- `dist/serveur-source.zip` — sources du serveur embarqué (GPL-3.0), joint à la release.

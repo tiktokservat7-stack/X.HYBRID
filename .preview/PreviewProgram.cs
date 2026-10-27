@@ -116,6 +116,18 @@ namespace FNHybrid
                 return;
             }
 
+            if (args.Length > 0 && args[0] == "--payload")
+            {
+                RunPayloadTest();
+                return;
+            }
+
+            if (args.Length > 0 && args[0] == "--serve")
+            {
+                RunServeTest();
+                return;
+            }
+
             if (args.Length > 0 && args[0] == "--interact")
             {
                 RunInteractions(args.Length > 1 ? args[1] : "shots");
@@ -178,6 +190,112 @@ namespace FNHybrid
                 using (var bmp = f.RenderPreview())
                     bmp.Save(outPath, ImageFormat.Png);
             }
+        }
+
+        // Installation du serveur embarqué dans l'exe, testée sur un profil vierge
+        // (lancer avec APPDATA pointant vers un dossier vide).
+        static void RunPayloadTest()
+        {
+            Console.WriteLine("racine  : " + ServerPayload.Root);
+            Check("paquet embarqué présent", ServerPayload.HasPayload, "");
+            Check("paquet complet (serveur, Node, profil)", ServerPayload.Verify(), "");
+            if (!ServerPayload.HasPayload)
+            {
+                Console.WriteLine("1 FAILURE(S)");
+                Environment.ExitCode = 1;
+                return;
+            }
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            string dir = ServerPayload.Install(delegate (string m) { Console.WriteLine(m); },
+                delegate (int p) { if (p % 20 == 0) Console.WriteLine("  " + p + " %"); });
+            sw.Stop();
+            Console.WriteLine("installation en " + sw.ElapsedMilliseconds + " ms");
+
+            Check("dossier serveur installé", ServerPayload.ServerPresent &&
+                System.IO.File.Exists(System.IO.Path.Combine(dir, "index.js")), dir);
+            Check("moteur Node.js installé", ServerPayload.NodePresent,
+                ServerPayload.NodePresent ? new System.IO.FileInfo(ServerPayload.NodeExe).Length / (1024 * 1024) + " Mo" : "absent");
+            Check("profil embarqué installé",
+                System.IO.File.Exists(System.IO.Path.Combine(dir, "profiles", "athena.json")), "");
+            Check("script cosmétiques installé",
+                System.IO.File.Exists(System.IO.Path.Combine(dir, "sync_cosmetics.js")), "");
+            Check("licence du serveur installée",
+                System.IO.File.Exists(System.IO.Path.Combine(dir, "LICENSE")), "");
+            Check("mention de version du paquet", ServerPayload.IsInstalled,
+                Convert.ToString(ServerPayload.InstalledVersion));
+            Check("Node.js choisi par l'app",
+                ServerManager.FindNode(new AppConfig()) == ServerPayload.NodeExe,
+                Convert.ToString(ServerManager.FindNode(new AppConfig())));
+
+            // deuxième installation : les données du joueur ne sont jamais écrasées
+            string athena = System.IO.Path.Combine(dir, "profiles", "athena.json");
+            string saved = System.IO.File.ReadAllText(athena);
+            System.IO.File.WriteAllText(athena, "{\"joueur\":\"moi\"}");
+            ServerPayload.Install(null, null);
+            Check("profil du joueur conservé", System.IO.File.ReadAllText(athena).Contains("moi"), "");
+            System.IO.File.WriteAllText(athena, saved);
+
+            Console.WriteLine(_fail == 0 ? "PAYLOAD TESTS PASSED" : (_fail + " FAILURE(S)"));
+            Environment.ExitCode = _fail == 0 ? 0 : 1;
+        }
+
+        // Bout en bout sur un profil vierge : le launcher installe le serveur
+        // embarqué, le démarre avec le Node embarqué et répond en HTTP.
+        static void RunServeTest()
+        {
+            Environment.SetEnvironmentVariable("XHYBRID_PREVIEW", "1");
+            Console.WriteLine("racine : " + ServerPayload.Root);
+
+            using (var f = new ProbeForm())
+            {
+                f.ShowInTaskbar = false;
+                f.StartPosition = FormStartPosition.Manual;
+                f.Location = new Point(-4000, -3000);
+                f.Show();
+                Application.DoEvents();
+
+                f.MiniToggleServer();   // installe le serveur embarqué puis le démarre
+                for (int i = 0; i < 90 && !ServerManager.IsRunning(); i++)
+                {
+                    Application.DoEvents();
+                    System.Threading.Thread.Sleep(500);
+                }
+
+                Check("serveur privé en écoute sur le port 80", ServerManager.IsRunning(), "");
+                string dir = Convert.ToString(f.ToolsServerDir);
+                Check("serveur lancé depuis la copie embarquée",
+                    dir != null && dir.StartsWith(ServerPayload.ServerDir, StringComparison.OrdinalIgnoreCase), dir);
+
+                try
+                {
+                    using (var c = new System.Net.Http.HttpClient())
+                    {
+                        c.Timeout = TimeSpan.FromSeconds(8);
+                        var resp = c.GetAsync("http://127.0.0.1/fortnite/api/version").Result;
+                        var body = resp.Content.ReadAsStringAsync().Result;
+                        Check("réponse HTTP du serveur embarqué",
+                            resp.IsSuccessStatusCode && body.Length > 0,
+                            "HTTP " + (int)resp.StatusCode + ", " + body.Length + " octets");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Check("réponse HTTP du serveur embarqué", false, ex.Message);
+                }
+
+                ServerManager.Stop();
+                for (int i = 0; i < 20 && ServerManager.IsRunning(); i++)
+                {
+                    Application.DoEvents();
+                    System.Threading.Thread.Sleep(300);
+                }
+                Check("serveur arrêté proprement", !ServerManager.IsRunning(), "");
+                f.Close();
+            }
+
+            Console.WriteLine(_fail == 0 ? "SERVE TESTS PASSED" : (_fail + " FAILURE(S)"));
+            Environment.ExitCode = _fail == 0 ? 0 : 1;
         }
 
         static void RunInteractions(string shots)

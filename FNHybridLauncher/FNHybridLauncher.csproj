@@ -22,10 +22,23 @@
     <EmbeddedResource Include="$(PkgBouncyCastle_Cryptography)\lib\net461\BouncyCastle.Cryptography.dll" LogicalName="BouncyCastle.Cryptography.dll" />
   </ItemGroup>
 
+  <!-- Serveur prive (LawinServer) et moteur Node.js embarques eux aussi : le
+       premier lancement les installe dans %APPDATA%\FNHybrid. Construire le
+       paquet avec tools/make-payload.ps1 avant de compiler une release. -->
+  <ItemGroup Condition="Exists('payload.zip')">
+    <EmbeddedResource Include="payload.zip" LogicalName="payload.zip" />
+  </ItemGroup>
+
+  <Target Name="CheckPayload" BeforeTargets="BeforeBuild" Condition="'$(Configuration)' == 'Release' And !Exists('payload.zip')">
+    <Error Text="payload.zip est absent : lance tools/make-payload.ps1 avant de compiler la release (sinon l'exe n'installe pas le serveur)." />
+  </Target>
+
   <ItemGroup>
     <Reference Include="System.Web.Extensions" />
     <Reference Include="System.Net.Http" />
     <Reference Include="System.Security" />
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
   </ItemGroup>
 
 </Project>

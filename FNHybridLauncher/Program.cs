@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Reflection;
 using System.Threading;
 using System.Windows.Forms;
@@ -19,7 +21,8 @@ namespace FNHybrid
             AppDomain.CurrentDomain.AssemblyResolve += ResolveEmbedded;
 
             // controle technique utilise par les tests : charge le chiffrement
-            // embarque et sort avec le code 0 si tout va bien.
+            // embarque, verifie le paquet serveur (serveur + Node.js) et sort
+            // avec le code 0 si tout va bien (5 si le paquet est incomplet).
             if (args != null && args.Length > 0 && args[0] == "--self-test")
             {
                 int code = 0;
@@ -32,6 +35,33 @@ namespace FNHybrid
                 {
                     FileLog.Write("self-test: " + ex);
                     code = 4;
+                }
+                if (code == 0 && !ServerPayload.Verify()) code = 5;
+                Environment.Exit(code);
+                return;
+            }
+
+            // installation du serveur embarqué sans ouvrir la fenêtre (diagnostic) :
+            // le compte rendu est écrit dans %TEMP%\xhybrid-payload.txt
+            if (args != null && args.Length > 0 && args[0] == "--install-payload")
+            {
+                string report = Path.Combine(Path.GetTempPath(), "xhybrid-payload.txt");
+                int code = 0;
+                try
+                {
+                    var lines = new List<string>();
+                    ServerPayload.Install(delegate (string m) { lines.Add(m); }, null);
+                    lines.Add("racine=" + ServerPayload.Root);
+                    lines.Add("serveur=" + ServerPayload.ServerDir);
+                    lines.Add("node=" + ServerPayload.NodeExe);
+                    lines.Add("version installee=" + ServerPayload.InstalledVersion);
+                    File.WriteAllLines(report, lines.ToArray());
+                }
+                catch (Exception ex)
+                {
+                    code = 6;
+                    FileLog.Write("install-payload: " + ex);
+                    try { File.WriteAllText(report, "ECHEC : " + ex); } catch (Exception) { }
                 }
                 Environment.Exit(code);
                 return;

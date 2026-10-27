@@ -131,9 +131,16 @@ namespace FNHybrid
                 }
                 if (_prefs.OpenConsoleOnStart) OpenMini(MiniWindow.Kind.Console, DefaultAnchor());
 
-                // le serveur privé doit tourner même sans session : le jeu en a besoin
+                // le serveur privé doit tourner même sans session : le jeu en a besoin.
+                // Premier lancement : la copie embarquée du serveur et le moteur Node.js
+                // s'installent ici (une seule fois), le joueur n'a rien à préparer.
                 if (_prefs.AutoStartServer && !ServerManager.IsRunning())
-                    Task.Run(new Action(PrepBackend));
+                    Task.Run(delegate
+                    {
+                        if (Environment.GetEnvironmentVariable("XHYBRID_PREVIEW") == null)
+                            EnsureBundledServer();
+                        PrepBackend();
+                    });
             };
 
             var pv = Environment.GetEnvironmentVariable("XHYBRID_PREVIEW");
@@ -1961,6 +1968,8 @@ namespace FNHybrid
                 ProxyManager.Start();
                 Log(S("Proxy SSL local actif sur le port ", "Local SSL proxy running on port ") + ProxyManager.ProxyPort + ".");
 
+                EnsureBundledServer();
+
                 var dir = ResolveServerDir();
                 if (dir == null)
                     Log(S("ATTENTION : dossier LawinServer introuvable (config : ",
@@ -2014,7 +2023,62 @@ namespace FNHybrid
                 if (string.IsNullOrEmpty(parent) || parent == here) break;
                 here = parent;
             }
+
+            // serveur installé par X.HYBRID lui-même (embarqué dans l'exe)
+            if (ServerPayload.ServerPresent) return ServerPayload.ServerDir;
             return null;
+        }
+
+        // Installe le serveur embarqué dans l'exe quand il manque quelque chose au
+        // joueur : ni dossier LawinServer, ni Node.js. Aucun téléchargement, tout
+        // est déjà dans l'exécutable. Renvoie false si l'installation a échoué.
+        bool EnsureBundledServer()
+        {
+            if (!ServerPayload.HasPayload) return true;   // compilation de test sans paquet
+
+            bool haveFolder = ResolveServerDir() != null;
+            bool haveNode = ServerManager.NodeAvailable(_config);
+            if (haveFolder && haveNode) return true;
+
+            if (ServerPayload.IsInstalled)
+            {
+                if (!haveFolder) { _config.ServerDir = ServerPayload.ServerDir; _config.Save(); }
+                return true;
+            }
+
+            Log(S("Installation du serveur privé (une seule fois, sans téléchargement)…",
+                  "Installing the private server (one time only, nothing to download)…"));
+            Ui(delegate { Status(S("Installation du serveur privé…", "Installing the private server…")); Invalidate(); });
+
+            try
+            {
+                ServerPayload.Install(Log, delegate (int pct)
+                {
+                    Ui(delegate
+                    {
+                        if (pct >= 100) Status(S("Serveur privé installé.", "Private server installed."));
+                        else Status(S("Installation du serveur privé… ", "Installing the private server… ") + pct + "%");
+                        Invalidate();
+                    });
+                });
+            }
+            catch (Exception ex)
+            {
+                FileLog.Write("payload: " + ex);
+                Log(S("Installation du serveur impossible : ", "Server installation failed: ") + ex.Message);
+                Ui(delegate { Status(S("Installation du serveur impossible.", "Server installation failed.")); Invalidate(); });
+                return false;
+            }
+
+            if (ResolveServerDir() == null)
+            {
+                _config.ServerDir = ServerPayload.ServerDir;
+                _config.Save();
+            }
+            Log(S("Serveur privé installé dans ", "Private server installed in ") + ServerPayload.ServerDir);
+            if (ServerManager.FindNode(_config) == ServerPayload.NodeExe)
+                Log(S("Moteur Node.js embarqué prêt.", "Bundled Node.js runtime ready."));
+            return true;
         }
 
         void LaunchGame()
@@ -2086,6 +2150,8 @@ namespace FNHybrid
         {
             try
             {
+                EnsureBundledServer();
+
                 var dir = ResolveServerDir();
                 if (dir == null)
                 {
@@ -2098,8 +2164,8 @@ namespace FNHybrid
                     }
                 }
                 if (dir == null || !Directory.Exists(dir))
-                    throw new Exception(S("Dossier de LawinServer introuvable. Mets LawinServer à côté du launcher.",
-                                          "LawinServer folder not found. Place LawinServer next to the launcher."));
+                    throw new Exception(S("Dossier du serveur privé introuvable (le serveur embarqué n'a pas pu s'installer).",
+                                          "Private server folder not found (the bundled server could not be installed)."));
                 if (_config.ServerDir != dir) { _config.ServerDir = dir; _config.Save(); }
 
                 if (_config.LaunchRedirect && !Redirect.IsApplied(_config))
@@ -2124,8 +2190,8 @@ namespace FNHybrid
                         ServerManager.Start(_config, Log, out p);
                         ServerManager.WaitReady(10);
                         if (!ServerManager.IsRunning())
-                            throw new Exception(S("Le serveur n'a pas répondu. Node.js est-il installé ?",
-                                                  "The server did not respond. Is Node.js installed?"));
+                            throw new Exception(S("Le serveur n'a pas répondu sur le port 80.",
+                                                  "The server did not respond on port 80."));
                     }
                 }
                 Log(S("Serveur privé prêt.", "Private server ready."));
@@ -2191,6 +2257,8 @@ namespace FNHybrid
                         return;
                     }
 
+                    EnsureBundledServer();
+
                     var dir = ResolveServerDir();
                     if (dir == null)
                     {
@@ -2204,7 +2272,7 @@ namespace FNHybrid
                     }
                     if (dir == null || !Directory.Exists(dir))
                     {
-                        Log(S("Dossier de LawinServer introuvable.", "LawinServer folder not found."));
+                        Log(S("Dossier du serveur privé introuvable.", "Private server folder not found."));
                         Ui(delegate { _serverBusy = false; Status(S("Dossier serveur introuvable.", "Server folder not found.")); Invalidate(); });
                         return;
                     }
@@ -2588,7 +2656,10 @@ namespace FNHybrid
 
                     Log(S("Recherche des nouveaux cosmétiques…", "Checking for new cosmetics…"));
                     string error;
-                    if (!CosmeticsSync.Run(ServerManager.FindNode(_config), dir, Log, out error))
+                    var node = ServerManager.FindNode(_config);
+                    if (node == null)
+                        Log(S("Cosmétiques : moteur Node.js introuvable.", "Cosmetics: Node.js runtime not found."));
+                    else if (!CosmeticsSync.Run(node, dir, Log, out error))
                         Log(S("Cosmétiques : ", "Cosmetics: ") + error);
                 }
                 catch (Exception ex)

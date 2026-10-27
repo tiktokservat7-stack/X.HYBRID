@@ -21,6 +21,11 @@ namespace FNHybrid
 
         public static string GetDir()
         {
+            // XHYBRID_HOME permet de deplacer tout le dossier de donnees (profil
+            // separe) : utilise par les tests d'installation sur un profil vierge.
+            var custom = Environment.GetEnvironmentVariable("XHYBRID_HOME");
+            if (!string.IsNullOrEmpty(custom)) return custom;
+
             return Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "FNHybrid");

@@ -30,22 +30,72 @@ namespace FNHybrid
             catch { return false; }
         }
 
+        // Moteur Node.js à utiliser : celui installé par X.HYBRID (embarqué dans
+        // l'exe, %APPDATA%\FNHybrid\node) en premier, sinon celui du système.
+        // null si aucun n'est disponible : l'appelant affiche alors un message clair
+        // au lieu de « Le fichier spécifié est introuvable ».
         public static string FindNode(AppConfig cfg)
         {
-            if (!string.IsNullOrEmpty(cfg.NodeExe) && File.Exists(cfg.NodeExe)) return cfg.NodeExe;
-            var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-            var pf86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
-            var p1 = Path.Combine(pf, "nodejs", "node.exe");
-            var p2 = Path.Combine(pf86, "nodejs", "node.exe");
-            if (File.Exists(p1)) return p1;
-            if (File.Exists(p2)) return p2;
-            return "node"; // si présent dans le PATH
+            try
+            {
+                if (!string.IsNullOrEmpty(cfg.NodeExe) && File.Exists(cfg.NodeExe)) return cfg.NodeExe;
+                if (File.Exists(ServerPayload.NodeExe)) return ServerPayload.NodeExe;
+
+                var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+                var pf86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+                var p1 = Path.Combine(pf, "nodejs", "node.exe");
+                var p2 = Path.Combine(pf86, "nodejs", "node.exe");
+                if (File.Exists(p1)) return p1;
+                if (File.Exists(p2)) return p2;
+
+                return FindInPath("node.exe");
+            }
+            catch (Exception) { return null; }
+        }
+
+        public static bool NodeAvailable(AppConfig cfg)
+        {
+            return FindNode(cfg) != null;
+        }
+
+        static string FindInPath(string fileName)
+        {
+            try
+            {
+                var path = Environment.GetEnvironmentVariable("PATH");
+                if (string.IsNullOrEmpty(path)) return null;
+                foreach (var raw in path.Split(new char[] { ';' }, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    try
+                    {
+                        var dir = raw.Trim().Trim('"');
+                        if (dir.Length == 0) continue;
+                        var full = Path.Combine(dir, fileName);
+                        if (File.Exists(full)) return full;
+                    }
+                    catch (Exception) { }
+                }
+            }
+            catch (Exception) { }
+            return null;
+        }
+
+        static string T(string fr, string en)
+        {
+            return LauncherPrefs.Language_ == "en" ? en : fr;
         }
 
         public static void Start(AppConfig cfg, Action<string> log, out Process proc)
         {
             var dir = cfg.ServerDir;
+            if (string.IsNullOrEmpty(dir) || !File.Exists(Path.Combine(dir, "index.js")))
+                throw new Exception(T("Le dossier du serveur privé est incomplet (index.js manquant).",
+                                      "The private server folder is incomplete (index.js missing)."));
+
             var node = FindNode(cfg);
+            if (node == null)
+                throw new Exception(T("Le moteur du serveur (Node.js) est introuvable. Relance X.HYBRID V1 : il est inclus dans l'exe.",
+                                      "The server engine (Node.js) could not be found. Restart X.HYBRID V1: it is bundled in the exe."));
 
             var psi = new ProcessStartInfo();
             psi.FileName = node;

@@ -13,6 +13,9 @@ FNHybridLauncher/binVerify 2/
 # exe de release (joint aux releases GitHub)
 dist/
 
+# contenu embarque dans l'exe, reconstruit par tools/make-payload.ps1
+FNHybridLauncher/payload.zip
+
 # Visual Studio
 .vs/
 *.user
