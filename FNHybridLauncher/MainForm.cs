@@ -2007,9 +2007,12 @@ namespace FNHybrid
             }
         }
 
+        // Dossier du serveur privé. Un dossier configuré mais incomplet (index.js,
+        // structure/ ou node_modules/ manquants) est ignoré : sinon les mises a jour
+        // venant d'anciennes versions echouaient avec « dossier incomplet ».
         string ResolveServerDir()
         {
-            if (!string.IsNullOrEmpty(_config.ServerDir) && Directory.Exists(_config.ServerDir))
+            if (ServerManager.IsUsableServerDir(_config.ServerDir))
                 return _config.ServerDir;
 
             var baseDir = AppDomain.CurrentDomain.BaseDirectory;
@@ -2017,7 +2020,7 @@ namespace FNHybrid
             for (int i = 0; i <= 6; i++)
             {
                 var candidate = Path.Combine(here, "LawinServer");
-                if (Directory.Exists(candidate) && File.Exists(Path.Combine(candidate, "index.js")))
+                if (ServerManager.IsUsableServerDir(candidate))
                     return candidate;
                 var parent = Path.GetDirectoryName(here.TrimEnd(Path.DirectorySeparatorChar));
                 if (string.IsNullOrEmpty(parent) || parent == here) break;
@@ -2025,7 +2028,7 @@ namespace FNHybrid
             }
 
             // serveur installé par X.HYBRID lui-même (embarqué dans l'exe)
-            if (ServerPayload.ServerPresent) return ServerPayload.ServerDir;
+            if (ServerManager.IsUsableServerDir(ServerPayload.ServerDir)) return ServerPayload.ServerDir;
             return null;
         }
 
@@ -2034,17 +2037,24 @@ namespace FNHybrid
         // est déjà dans l'exécutable. Renvoie false si l'installation a échoué.
         bool EnsureBundledServer()
         {
-            if (!ServerPayload.HasPayload) return true;   // compilation de test sans paquet
+            if (!ServerPayload.HasPayload) return ResolveServerDir() != null;   // compilation sans paquet
 
-            bool haveFolder = ResolveServerDir() != null;
-            bool haveNode = ServerManager.NodeAvailable(_config);
-            if (haveFolder && haveNode) return true;
-
-            if (ServerPayload.IsInstalled)
+            // la config d'une ancienne version pointait parfois vers un dossier vide :
+            // on la corrige dès que la copie embarquée est là
+            if (!ServerManager.IsUsableServerDir(_config.ServerDir) && ServerPayload.IsInstalled)
             {
-                if (!haveFolder) { _config.ServerDir = ServerPayload.ServerDir; _config.Save(); }
-                return true;
+                _config.ServerDir = ServerPayload.ServerDir;
+                _config.Save();
             }
+
+            var dir = ResolveServerDir();
+            bool haveServer = dir != null;
+            bool haveNode = ServerManager.NodeAvailable(_config);
+            bool fromBundled = haveServer &&
+                string.Equals(dir, ServerPayload.ServerDir, StringComparison.OrdinalIgnoreCase);
+
+            // rien à faire : serveur utilisable, moteur présent, copie embarquée à jour
+            if (haveServer && haveNode && (!fromBundled || ServerPayload.IsInstalled)) return true;
 
             Log(S("Installation du serveur privé (une seule fois, sans téléchargement)…",
                   "Installing the private server (one time only, nothing to download)…"));
@@ -2070,7 +2080,7 @@ namespace FNHybrid
                 return false;
             }
 
-            if (ResolveServerDir() == null)
+            if (!ServerManager.IsUsableServerDir(_config.ServerDir))
             {
                 _config.ServerDir = ServerPayload.ServerDir;
                 _config.Save();
@@ -2263,12 +2273,15 @@ namespace FNHybrid
                     if (dir == null)
                     {
                         string picked = UiInvoke(delegate { return PickFolder(S("Sélectionne le dossier de LawinServer", "Select the LawinServer folder")); });
-                        if (picked != null)
+                        if (picked != null && ServerManager.IsUsableServerDir(picked))
                         {
                             _config.ServerDir = picked;
                             _config.Save();
                             dir = picked;
                         }
+                        else if (picked != null)
+                            Log(S("Ce dossier ne contient pas le serveur privé (index.js, structure ou node_modules introuvables).",
+                                  "This folder does not contain the private server (index.js, structure or node_modules missing)."));
                     }
                     if (dir == null || !Directory.Exists(dir))
                     {

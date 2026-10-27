@@ -173,9 +173,10 @@ namespace FNHybrid
                         + (kept > 0 ? ", " + kept + " donnée(s) du joueur conservée(s)" : "")
                         + (failed > 0 ? ", " + failed + " fichier(s) verrouillé(s)" : "") + " dans " + Root);
 
-                // marqueur écrit seulement si tout est en place : sinon nouvelle
-                // tentative au prochain démarrage
-                if (ServerPresent && NodePresent && failed == 0)
+                // marqueur écrit dès que le serveur et le moteur sont en place. Un
+                // fichier verrouillé (serveur en cours d'exécution) est signalé mais
+                // ne relance pas une extraction de 150 Mo à chaque démarrage.
+                if (ServerPresent && NodePresent)
                     File.WriteAllText(Marker, Version);
 
                 if (progress != null) progress(100);

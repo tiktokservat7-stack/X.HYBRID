@@ -247,6 +247,15 @@ namespace FNHybrid
             Environment.SetEnvironmentVariable("XHYBRID_PREVIEW", "1");
             Console.WriteLine("racine : " + ServerPayload.Root);
 
+            // reproduit la config d'une ancienne version : le dossier enregistré
+            // existe mais ne contient aucun serveur (bug « dossier incomplet »)
+            string empty = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "xh-dossier-vide");
+            System.IO.Directory.CreateDirectory(empty);
+            var broken = new AppConfig();
+            broken.ServerDir = empty;
+            broken.Save();
+            Console.WriteLine("config de test : ServerDir=" + empty);
+
             using (var f = new ProbeForm())
             {
                 f.ShowInTaskbar = false;
@@ -291,6 +300,11 @@ namespace FNHybrid
                     System.Threading.Thread.Sleep(300);
                 }
                 Check("serveur arrêté proprement", !ServerManager.IsRunning(), "");
+
+                var cfg = (AppConfig)Field(f, "_config");
+                Check("config réparée vers la copie embarquée",
+                    cfg != null && string.Equals(cfg.ServerDir, ServerPayload.ServerDir, StringComparison.OrdinalIgnoreCase),
+                    cfg == null ? "config absente" : cfg.ServerDir);
                 f.Close();
             }
 

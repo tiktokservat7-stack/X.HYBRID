@@ -58,6 +58,21 @@ namespace FNHybrid
             return FindNode(cfg) != null;
         }
 
+        // Un dossier est utilisable seulement s'il contient vraiment le serveur :
+        // index.js, structure/ et node_modules/. Un dossier vide (choisi un jour par
+        // erreur) ou une installation interrompue ne compte donc pas comme un serveur.
+        public static bool IsUsableServerDir(string dir)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return false;
+                return File.Exists(Path.Combine(dir, "index.js"))
+                    && Directory.Exists(Path.Combine(dir, "structure"))
+                    && Directory.Exists(Path.Combine(dir, "node_modules"));
+            }
+            catch (Exception) { return false; }
+        }
+
         static string FindInPath(string fileName)
         {
             try
@@ -88,9 +103,9 @@ namespace FNHybrid
         public static void Start(AppConfig cfg, Action<string> log, out Process proc)
         {
             var dir = cfg.ServerDir;
-            if (string.IsNullOrEmpty(dir) || !File.Exists(Path.Combine(dir, "index.js")))
-                throw new Exception(T("Le dossier du serveur privé est incomplet (index.js manquant).",
-                                      "The private server folder is incomplete (index.js missing)."));
+            if (!IsUsableServerDir(dir))
+                throw new Exception(T("Le dossier du serveur privé est incomplet : ",
+                                      "The private server folder is incomplete: ") + (dir ?? "aucun"));
 
             var node = FindNode(cfg);
             if (node == null)
