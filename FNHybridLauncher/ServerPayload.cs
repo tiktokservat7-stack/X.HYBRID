@@ -16,7 +16,7 @@ namespace FNHybrid
         // À incrémenter chaque fois que le contenu embarqué change : les
         // installations existantes récupèrent alors la nouvelle version, sans
         // jamais toucher aux profils ni à la configuration du joueur.
-        public const string Version = "1";
+        public const string Version = "2";
 
         public const string ResourceName = "payload.zip";
 

@@ -119,10 +119,14 @@ namespace FNHybrid
             // lui qui renvoie la file d'attente simulee du serveur prive. Le relais
             // vers Epic (pass_through_matchmaking.js) ne s'active que si le jeu
             // presente un vrai jeton Epic, pas le jeton local.
+            // fortnitecontent : pages de contenu du serveur prive (salon X.HYBRID),
+            // ShopRouter y remplace seulement la partie boutique par celle d'Epic.
             return h.Contains("fngw")
                 || h.Contains("fortnitecontent")
                 || h.Contains("fortnite-public-service")
-                || h.Contains("xmpp-service")
+                // actus du lobby (MOTD) : servies par le serveur prive pour
+                // afficher les actus X.HYBRID au lieu de celles d'Epic
+                || h.StartsWith("prm-dialogue-public-api")
                 || h.Contains("matchmaker")
                 || h.StartsWith("mm.") || h.StartsWith("mm-")
                 || h.StartsWith("ws.mm")
@@ -136,7 +140,19 @@ namespace FNHybrid
             return 80;
         }
 
+        static int _activeClients;
+
+        // connexions en cours qui passent par le proxy
+        public static int ActiveConnections { get { return System.Threading.Volatile.Read(ref _activeClients); } }
+
         static async Task HandleClient(TcpClient client)
+        {
+            System.Threading.Interlocked.Increment(ref _activeClients);
+            try { await HandleClientCore(client); }
+            finally { System.Threading.Interlocked.Decrement(ref _activeClients); }
+        }
+
+        static async Task HandleClientCore(TcpClient client)
         {
             var ns = client.GetStream();
             try
@@ -201,6 +217,13 @@ namespace FNHybrid
                 using (var ssl = new SslStream(ns, true))
                 {
                     await ssl.AuthenticateAsServerAsync(cert, false, SslProtocols.Tls12, false);
+                    if (ShopRouter.HandlesHost(target))
+                    {
+                        // fngw : profil/casier -> serveur prive, boutique -> Epic (requete par requete)
+                        await ShopRouter.Serve(ssl, target, BackendPort(target),
+                            (h, p) => ConnectSmart(h, p));
+                        return;
+                    }
                     using (var backend = new TcpClient())
                     {
                         await backend.ConnectAsync(IPAddress.Loopback, BackendPort(target));

@@ -107,6 +107,25 @@ namespace FNHybrid
         static void Main(string[] args)
         {
             Application.EnableVisualStyles();
+            if (args.Length > 1 && args[0] == "--eac")
+            {
+                // images de l'animation anti-cheat sur un écran de démarrage 800x450
+                var splash = new Rectangle(0, 0, 800, 450);
+                var logo = EacBreakOverlay.LogoRect(splash);
+                using (var ov = new EacBreakOverlay(IntPtr.Zero, splash, logo, null, null))
+                    foreach (var t in new[] { 0.3f, 0.9f, 1.5f, 1.9f, 2.4f })
+                        using (var bmp = new Bitmap(800, 450, PixelFormat.Format32bppPArgb))
+                        {
+                            using (var g = Graphics.FromImage(bmp))
+                            {
+                                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                                g.Clear(Color.FromArgb(255, 3, 10, 22));
+                                ov.DrawFrame(g, t);
+                            }
+                            bmp.Save(System.IO.Path.Combine(args[1], "eac_" + t.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + ".png"), ImageFormat.Png);
+                        }
+                return;
+            }
             if (args.Length > 1 && args[0] == "--download")
             {
                 var info = UpdateService.Check();
@@ -394,11 +413,10 @@ namespace FNHybrid
                 Check("fermeture de la fenêtre console", !f.MiniAlive(MiniWindow.Kind.Console), "");
 
                 f.ClickId("tile:accounts");
-                Check("tuile compte ouvre la page Comptes", Convert.ToString(Field(f, "_view")) == "Accounts",
-                    Convert.ToString(Field(f, "_view")));
-                f.SendKey(Keys.Escape);
-                Check("Échap revient à l'accueil", Convert.ToString(Field(f, "_view")) == "Home",
-                    Convert.ToString(Field(f, "_view")));
+                Check("tuile compte ouvre une fenêtre", f.MiniAlive(MiniWindow.Kind.Account), "");
+                Check("accueil toujours visible", Convert.ToString(Field(f, "_view")) == "Home", "");
+                Check("bouton Fortnite retiré", !f.HasId("nav:fortnite"), "");
+                f.CloseMini("_miniAccount");
 
                 f.ClickId("tile:play");
                 Check("tuile manette ouvre sa fenêtre", f.MiniAlive(MiniWindow.Kind.Custom), "");
@@ -477,24 +495,13 @@ namespace FNHybrid
                 Check("déconnexion depuis le menu profil", Field(f, "_login") == null, "");
                 Check("le menu se referme", !(bool)Field(f, "_profileOpen"), "");
 
-                // ---- page comptes : plus de bouton d'ajout une fois connecté
+                // ---- fenêtre de compte depuis l'accueil connecté
                 f.ApplyPreview("connected");
                 f.PaintOffscreen();
                 f.ClickId("tile:accounts");
-                Check("page comptes sans bouton d'ajout", !f.HasId("acct:add"), "");
-                f.SendKey(Keys.Escape);
-
-                // ---- déconnexion depuis la page Comptes
-                f.ApplyPreview("connected");
-                f.PaintOffscreen();
-                f.ClickId("tile:accounts");
-                Check("page comptes connecté", Convert.ToString(Field(f, "_view")) == "Accounts",
-                    Convert.ToString(Field(f, "_view")));
-                f.ClickId("acct:logout");
-                Application.DoEvents();
-                Check("déconnexion depuis la page Comptes", Field(f, "_login") == null, "");
-                f.PaintOffscreen();
-                Check("sans session, le launcher reste sur l'accueil déconnecté", Field(f, "_login") == null, "");
+                Check("fenêtre de compte connecté", f.MiniAlive(MiniWindow.Kind.Account), "");
+                f.CloseMini("_miniAccount");
+                Check("fermeture de la fenêtre compte", !f.MiniAlive(MiniWindow.Kind.Account), "");
 
                 f.Close();
             }

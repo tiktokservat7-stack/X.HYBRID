@@ -160,9 +160,18 @@ namespace FNHybrid
             return "com.epicgames.launcher://apps/fn%3A4fe75bbc5a674f4f9b356b5c90567da5%3AFortnite?action=launch&silent=true";
         }
 
+        public static bool IsRunning()
+        {
+            var processes = Process.GetProcessesByName(Path.GetFileNameWithoutExtension(ExeName));
+            foreach (var process in processes)
+                process.Dispose();
+            return processes.Length > 0;
+        }
+
         public static void LaunchViaEgs(AppConfig cfg, bool privateMode)
         {
-            if (Process.GetProcessesByName("FortniteClient-Win64-Shipping").Length > 0) return;
+            if (IsRunning())
+                throw new InvalidOperationException("Fortnite is already running.");
 
             var url = FindEgsLaunchUrl(cfg);
 
@@ -172,7 +181,14 @@ namespace FNHybrid
             // (WatchGameSession le restaure dès que Fortnite se ferme).
             // En mode en ligne on ne touche a aucun reglage reseau : le jeu doit
             // joindre les vrais serveurs Epic pour qu'une partie puisse demarrer.
-            if (privateMode) ProxyManager.EnableSystemProxy();
+            if (privateMode)
+            {
+                ProxyManager.EnableSystemProxy();
+                // Fortnite lit le proxy une seule fois au démarrage : on attend que
+                // Windows le lui renvoie vraiment, sinon il part sans serveur privé
+                if (!ProxyManager.WaitVisibleToGame(5000))
+                    FileLog.Write("PROXY : Windows ne renvoie pas encore le proxy au lancement de Fortnite.");
+            }
 
             // UseShellExecute = true : l'instance d'Epic Games Launcher déjà ouverte
             // reçoit l'URI et lance Fortnite, sans redémarrage ni perte de session.

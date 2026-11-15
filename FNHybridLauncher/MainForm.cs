@@ -40,9 +40,12 @@ namespace FNHybrid
         View _view = View.Home;
         bool _profileOpen;
         bool _launching;
+        bool _closeDrained;
+        LaunchSplash _launchSplash;
         bool _serverBusy;
         bool _privateBusy;
         bool _serverRunning;
+        volatile bool _gameRunning;   // Fortnite ouvert : le bouton affiche « En cours »
         bool _privateOn;
         bool _polling;
         bool _restoring;
@@ -58,6 +61,10 @@ namespace FNHybrid
         int _loginGen;
         string _status = "";
         string _hot;
+        string _previousHot;
+        long _hoverChangedAt;
+        string _clickedButton;
+        long _clickedAt;
         float _anim;
         float _u = 1f;
         float _dpiScale = 1f;
@@ -105,6 +112,10 @@ namespace FNHybrid
                 + " · " + S("serveur privé Fortnite", "Fortnite private server"));
 
             BuildTimers();
+
+            // images de démarrage de Fortnite restées en version X.HYBRID (app
+            // fermée pendant un lancement) : on remet celles d'origine
+            if (!GameRunning()) Task.Run(new Action(GameSplash.Restore));
 
             // relance du proxy SSL si le mode privé est déjà actif
             if (_privateOn && _config.LaunchRedirect)
@@ -171,8 +182,12 @@ namespace FNHybrid
         void ApplyRegion()
         {
             if (Width <= 0 || Height <= 0) return;
-            using (var p = Theme.Round(new Rectangle(0, 0, Width, Height), S(12)))
+            using (var p = Theme.Round(new Rectangle(0, 0, Width, Height), S(17)))
+            {
+                var previous = Region;
                 Region = new Region(p);
+                if (previous != null) previous.Dispose();
+            }
         }
 
         protected override void OnResize(EventArgs e)
@@ -211,11 +226,13 @@ namespace FNHybrid
         void BuildTimers()
         {
             _animTimer = new Timer();
-            _animTimer.Interval = 50;
+            _animTimer.Interval = 16;
             _animTimer.Tick += delegate
             {
-                _anim = (_anim + 6f) % 360f;
-                if (_prefs.Animations) Invalidate();
+                _anim = (_anim + 2f) % 360f;
+                if (!_prefs.Animations || WindowState == FormWindowState.Minimized) return;
+                if (_view != View.Home || _launching || ElapsedMs(_hoverChangedAt) < 200 ||
+                    ElapsedMs(_clickedAt) < 250) Invalidate();
             };
             if (_prefs.Animations) _animTimer.Start();
 
@@ -236,6 +253,7 @@ namespace FNHybrid
             {
                 bool run = false;
                 bool priv = false;
+                bool gameNow = GameRunning();
                 try { run = ServerManager.IsRunning(); } catch (Exception) { }
                 try { priv = Redirect.IsApplied(cfg); } catch (Exception) { }
 
@@ -259,7 +277,13 @@ namespace FNHybrid
                 {
                     _polling = false;
                     bool changed = run != _serverRunning || priv != _privateOn
-                                || wasServer != run || wasPrivate != priv;
+                                || wasServer != run || wasPrivate != priv
+                                || gameNow != _gameRunning;
+                    if (gameNow && !_gameRunning)
+                        ConsoleWindow.Say(S("Fortnite est lancé.", "Fortnite is running."), ConsoleWindow.Kind.Ok);
+                    else if (!gameNow && _gameRunning)
+                        ConsoleWindow.Say(S("Fortnite est fermé.", "Fortnite closed."), ConsoleWindow.Kind.Info);
+                    _gameRunning = gameNow;
                     _serverRunning = run;
                     _privateOn = priv;
                     if (changed) Invalidate();
@@ -344,6 +368,14 @@ namespace FNHybrid
             int H = ClientSize.Height;
             if (W < 40 || H < 40) return;
 
+            if (_view == View.Home)
+            {
+                if (_profileOpen)
+                    Hit(new RectangleF(0, 0, W, H), "backdrop", delegate { _profileOpen = false; Invalidate(); });
+                PaintHome(g, W, H);
+                if (_profileOpen) PaintProfileMenu(g, W, S(62), S(20));
+                return;
+            }
             PaintAmbient(g, W, H);
 
             int titleH = S(54);
@@ -397,13 +429,8 @@ namespace FNHybrid
             var outer = new RectangleF(1.2f, 1.2f, W - 2.4f, H - 2.4f);
             using (var p = Theme.Round(outer, S(12)))
             {
-                using (var glow = new Pen(Color.FromArgb(46, Theme.Bright), S(4)))
-                    g.DrawPath(glow, p);
-                using (var pen = new Pen(Color.FromArgb(255, 16, 108, 255), Math.Max(1.6f, S(2))))
+                using (var pen = new Pen(Color.FromArgb(48, 72, 104), Math.Max(1f, S(1))))
                     g.DrawPath(pen, p);
-                using (var inner = new Pen(Color.FromArgb(120, 26, 88, 168), Math.Max(0.8f, S(1))))
-                using (var p2 = Theme.Round(new RectangleF(outer.X + S(2), outer.Y + S(2), outer.Width - S(4), outer.Height - S(4)), S(10)))
-                    g.DrawPath(inner, p2);
             }
         }
 
@@ -626,139 +653,210 @@ namespace FNHybrid
                     case View.Login: PaintLogin(g, panel); break;
                     case View.Console: PaintConsole(g, panel); break;
                     case View.Accounts: PaintAccounts(g, panel); break;
-                    default: PaintHome(g, panel); break;
+
                 }
             }
             g.Restore(save);
         }
 
-        void PaintHome(Graphics g, RectangleF panel)
+        static readonly Lazy<Image> HomeArtwork = new Lazy<Image>(() =>
         {
-            bool on = _login != null;
-            float targetW = Math.Min(panel.Width * 0.52f, SF(560));
-            float logoH = Math.Max(SF(56), panel.Height * 0.215f);
+            using (var stream = typeof(MainForm).Assembly.GetManifestResourceStream("LobbyHome.png"))
+            using (var image = Image.FromStream(stream))
+                return new Bitmap(image);
+        });
 
-            var logoArea = new RectangleF(panel.X + (panel.Width - targetW) / 2f,
-                panel.Y + panel.Height * 0.085f, targetW, logoH);
-            var drawn = DrawBrand(g, logoArea, targetW, SF(86), StringAlignment.Center);
+        void PaintHome(Graphics g, int width, int height)
+        {
+            float sx = width / 1672f;
+            float sy = height / 941f;
+            Func<float, float, float, float, RectangleF> box =
+                (x, y, w, h) => new RectangleF(x * sx, y * sy, w * sx, h * sy);
 
-            if (_prefs.GlowBorders)
-                Theme.Glow(g, new RectangleF(panel.X + panel.Width * 0.3f, drawn.Bottom - S(8), panel.Width * 0.4f, S(40)),
-                    Theme.Electric, 26);
+            g.DrawImage(HomeArtwork.Value, new Rectangle(0, 0, width, height));
 
-            Theme.Text(g, S("LAUNCHER FORTNITE · SERVEUR PRIVÉ", "FORTNITE LAUNCHER · PRIVATE SERVER"),
-                UB(7.2f), Color.FromArgb(104, 170, 236),
-                new RectangleF(panel.X + S(40), drawn.Bottom + S(1), panel.Width - S(80), S(16)),
-                StringAlignment.Center, StringAlignment.Center, false);
-
-            if (_prefs.GlowBorders)
+            var sidebarBounds = box(32, 243, 233, 475);
+            using (var sidebar = new LinearGradientBrush(sidebarBounds,
+                Color.FromArgb(3, 12, 23), Color.FromArgb(4, 14, 24), 0f))
+                g.FillRectangle(sidebar, sidebarBounds);
+            for (int i = 0; i < 4; i++)
             {
-                float lineW = Math.Min(panel.Width * 0.44f, targetW * 0.92f);
-                Theme.GlowLine(g, new RectangleF(panel.X + (panel.Width - lineW) / 2f, drawn.Bottom + S(21), lineW, S(4)),
-                    Theme.Bright, 150);
+                int sourceY = 345 + i * 95;
+                g.DrawImage(HomeArtwork.Value, box(34, sourceY - 95, 230, 87),
+                    new RectangleF(34, sourceY, 230, 87), GraphicsUnit.Pixel);
             }
 
-            // ---- bandeau d'état : compte, serveur privé, mode ----
-            string server = _serverBusy ? S("Opération…", "Working…")
-                          : _serverRunning ? S("En ligne", "Online")
-                          : S("Arrêté", "Stopped");
-            string mode = _privateBusy ? S("Application…", "Applying…")
-                        : _privateOn ? S("Privé · SSL", "Private · SSL")
-                        : S("En ligne · Epic", "Online · Epic");
-
-            float stripW = Math.Min(panel.Width - S(96), SF(660));
-            var strip = new RectangleF(panel.X + (panel.Width - stripW) / 2f,
-                panel.Y + panel.Height * 0.40f, stripW, S(64));
-
-            DrawStatusStrip(g, strip,
-                new string[] { "user", "server", "shield" },
-                new string[] { S("COMPTE", "ACCOUNT"), S("SERVEUR PRIVÉ", "PRIVATE SERVER"), S("MODE", "MODE") },
-                new string[]
+            var profile = box(1165, 18, 330, 55);
+            var play = box(516, 610, 511, 104);
+            var settings = box(38, 539, 220, 77);
+            var status = box(250, 850, 425, 46);
+            string name = _login == null ? "Se connecter" : _login.DisplayName;
+            PaintReferenceText(g, box(1232, 28, 210, 36), name, 13f, Color.FromArgb(3, 12, 21));
+            PaintReferenceText(g, box(1328, 460, 278, 37), name, 14f, Color.FromArgb(8, 19, 31));
+            if (!_privateOn || _privateBusy)
+                PaintReferenceText(g, box(1328, 334, 260, 37),
+                    _privateBusy ? "Application…" : "En ligne", 15f, Color.FromArgb(8, 19, 31));
+            if (!_serverRunning || _serverBusy)
+            {
+                string server = _serverBusy ? "Serveur en cours de démarrage" : "Serveur privé arrêté";
+                PaintReferenceText(g, box(1328, 592, 225, 37),
+                    _serverBusy ? "Démarrage…" : "Arrêté", 15f, Color.FromArgb(8, 19, 31));
+                using (var background = new SolidBrush(Color.FromArgb(8, 19, 31)))
+                    g.FillEllipse(background, box(1572, 575, 36, 36));
+                using (var indicator = new SolidBrush(Theme.Amber))
+                    g.FillEllipse(indicator, box(1581, 584, 18, 18));
+                PaintReferenceText(g, status, "●  " + server, 12f, Color.FromArgb(3, 10, 18));
+            }
+            bool gameOpen = _gameRunning && !_launching && _login != null;
+            if (_launching || _login == null || gameOpen)
+            {
+                var button = box(659, 630, 320, 63);
+                using (var fill = new SolidBrush(Color.FromArgb(3, 27, 56)))
+                using (var shape = Theme.Round(button, S(10)))
+                    g.FillPath(fill, shape);
+                if (_launching || gameOpen)
                 {
-                    on ? _login.DisplayName : S("Non connecté", "Not signed in"),
-                    server,
-                    mode
-                },
-                new Color[]
-                {
-                    on ? (_sessionOffline ? Theme.Amber : Theme.Green) : Theme.Amber,
-                    _serverRunning ? Theme.Green : (_privateOn ? Theme.Amber : Color.FromArgb(132, 154, 180)),
-                    _privateOn ? Theme.Bright : Theme.Green
-                });
+                    // indicateur (roue qui tourne au lancement, point vert en jeu) + texte,
+                    // centrés ensemble pour que le texte ne soit jamais coupé
+                    string label = _launching ? "Lancement…" : "En cours";
+                    var font = UB(20f);
+                    float dot = button.Height * 0.42f;
+                    float gap = dot * 0.45f;
+                    SizeF textSize = g.MeasureString(label, font);
+                    float maxText = button.Width - dot - gap - button.Height * 0.4f;
+                    if (textSize.Width > maxText)
+                    {
+                        font = UB(20f * maxText / textSize.Width);
+                        textSize = g.MeasureString(label, font);
+                    }
+                    float groupW = dot + gap + textSize.Width;
+                    float left = button.X + (button.Width - groupW) / 2f;
+                    var arc = new RectangleF(left, button.Y + (button.Height - dot) / 2f, dot, dot);
+                    if (_launching)
+                    {
+                        // chargement : le bouton reste bloqué tant que Fortnite n'est pas ouvert
+                        using (var track = new Pen(Color.FromArgb(60, 120, 170, 230), Math.Max(2f, dot * 0.13f)))
+                            g.DrawEllipse(track, arc);
+                        using (var head = new Pen(Theme.Bright, Math.Max(2f, dot * 0.13f)) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+                            g.DrawArc(head, arc, _anim * 2f, 100f);
+                    }
+                    else
+                    {
+                        // Fortnite tourne : point vert fixe
+                        var inner = RectangleF.Inflate(arc, -dot * 0.22f, -dot * 0.22f);
+                        using (var halo = new SolidBrush(Color.FromArgb(70, Theme.Green)))
+                            g.FillEllipse(halo, arc);
+                        using (var core = new SolidBrush(Theme.Green))
+                            g.FillEllipse(core, inner);
+                    }
+                    Theme.Text(g, label, font, Theme.Ink,
+                        new RectangleF(arc.Right + gap, button.Y, textSize.Width + 4f, button.Height),
+                        StringAlignment.Near, StringAlignment.Center, false);
+                }
+                else
+                    Theme.Text(g, "Se connecter", UB(22f), Theme.Ink,
+                        button, StringAlignment.Center, StringAlignment.Center, false);
+            }
 
-            // ---- accroche ----
-            string line1 = on
-                ? string.Format(S("Bienvenue sur X.HYBRID V1, {0}.", "Welcome to X.HYBRID V1, {0}."), _login.DisplayName)
-                : S("Connecte-toi pour accéder à ton compte", "Sign in to access your account");
-            string line2 = on
-                ? S("Ton compte Epic Games est connecté.", "Your Epic Games account is connected.")
-                : S("et profiter de toutes les fonctionnalités.", "and unlock every feature.");
-
-            float textY = panel.Y + panel.Height * 0.605f;
-            Theme.Text(g, line1, U(11.2f), Color.FromArgb(232, 239, 250),
-                new RectangleF(panel.X + S(40), textY, panel.Width - S(80), S(24)), StringAlignment.Center, StringAlignment.Center, false);
-            Theme.Text(g, line2, U(11.2f), Color.FromArgb(214, 226, 242),
-                new RectangleF(panel.X + S(40), textY + S(23), panel.Width - S(80), S(24)), StringAlignment.Center, StringAlignment.Center, false);
-
-            float btnW = Math.Min(SF(400), panel.Width - S(140));
-            var btn = new RectangleF(panel.X + (panel.Width - btnW) / 2f, panel.Y + panel.Height * 0.748f, btnW, S(52));
-
-            if (!on)
-                PaintPrimary(g, btn, S("SE CONNECTER POUR JOUER", "SIGN IN TO PLAY"), "user", "home:login", true, delegate { StartLogin(false); });
-            else if (_privateOn)
-                PaintPrimary(g, btn, S("JOUER (SERVEUR PRIVÉ)", "PLAY (PRIVATE SERVER)"), "gamepad", "home:play", true, LaunchGame);
-            else
-                PaintPrimary(g, btn, S("JOUER EN LIGNE", "PLAY ONLINE"), "gamepad", "home:play", true, LaunchGame);
-
-            string sub;
-            if (!on)
-                sub = S("Connexion sécurisée Epic Games · aucun mot de passe stocké", "Secure Epic Games sign-in · no password stored");
-            else if (!_privateOn)
-                sub = S("⇄ Mode en ligne · ton compte Epic Games · vraies parties (Créatif, BR…)",
-                        "⇄ Online mode · your Epic Games account · real matches (Creative, BR…)");
-            else
-                sub = (_serverRunning ? S("Serveur privé en ligne", "Private server online")
-                                      : S("Serveur privé arrêté", "Private server offline"))
-                      + " · " + S("⇄ mode privé : casier et boutique, pas de partie",
-                                  "⇄ private mode: locker and shop, no match");
-
-            var subRect = new RectangleF(panel.X + S(40), btn.Bottom + S(18), panel.Width - S(80), S(18));
-            Theme.Text(g, sub, U(8.4f), Theme.Dim2, subRect,
-                StringAlignment.Center, StringAlignment.Center, false);
-
-            // Le changement de mode se fait dans la tuile « Mode privé » : un bouton
-            // en page d'accueil trop proche du bouton de lancement réarmait la
-            // redirection hosts par erreur.
+            Hit(box(38, 154, 220, 80), "nav:home", () => { _profileOpen = false; Invalidate(); });
+            var account = box(38, 254, 220, 78);
+            Hit(account, "tile:accounts", () =>
+            {
+                _profileOpen = false;
+                OpenMini(MiniWindow.Kind.Account, account);
+                Invalidate();
+            });
+            var custom = box(38, 349, 220, 78);
+            Hit(custom, "tile:play", () => OpenMini(MiniWindow.Kind.Custom, custom));
+            var console = box(38, 444, 220, 78);
+            Hit(console, "tile:console", () => OpenMini(MiniWindow.Kind.Console, console));
+            Hit(settings, "tile:login", () => OpenMini(MiniWindow.Kind.Private, settings));
+            if (!_launching && !gameOpen)
+                Hit(play, _login == null ? "home:login" : "home:play", StartReferenceGame);
+            Hit(profile, "profile", () =>
+            {
+                if (_login == null) StartLogin(false);
+                else { _profileOpen = !_profileOpen; Invalidate(); }
+            });
+            Hit(box(1523, 17, 64, 57), "win:min", () => WindowState = FormWindowState.Minimized);
+            Hit(box(1588, 17, 64, 57), "win:close", Close);
+            for (int i = 0; i < _hits.Count; i++)
+            {
+                var button = _hits[i];
+                if (button.Id != "backdrop")
+                    PaintHomeButtonFeedback(g, button.R, button.Id);
+            }
+            PaintHomeOutline(g, width, height);
+            Hit(box(15, 5, 1135, 77), "drag", DragWindow);
         }
 
-        // bandeau d'information (et non des boutons) : trois segments séparés
-        void DrawStatusStrip(Graphics g, RectangleF r, string[] icons, string[] labels, string[] values, Color[] accents)
+        static double ElapsedMs(long timestamp)
         {
-            using (var p = Theme.Round(r, S(10)))
+            return (Stopwatch.GetTimestamp() - timestamp) * 1000.0 / Stopwatch.Frequency;
+        }
+
+        void PaintHomeButtonFeedback(Graphics g, RectangleF bounds, string id)
+        {
+            float progress = _prefs.Animations ? (float)Math.Min(1, ElapsedMs(_hoverChangedAt) / 180) : 1;
+            float eased = 1 - (1 - progress) * (1 - progress);
+            float hover = id == _hot ? eased : id == _previousHot ? 1 - eased : 0;
+            float press = _prefs.Animations && id == _clickedButton
+                ? (float)Math.Max(0, 1 - ElapsedMs(_clickedAt) / 240) : 0;
+            if (hover <= 0 && press <= 0) return;
+
+            bounds.Inflate(-S(2f), -S(2f));
+            float radius = id == "home:play" || id == "home:login" ? S(15f) : S(11f);
+            Color accent = id == "win:close" ? Theme.Red : Color.FromArgb(91, 205, 255);
+            using (var shape = Theme.Round(bounds, radius))
+            using (var fill = new SolidBrush(Color.FromArgb((int)(22 * hover + 38 * press), accent)))
+            using (var glow = new Pen(Color.FromArgb((int)(47 * hover + 43 * press), accent), S(5f)))
+            using (var outline = new Pen(Color.FromArgb((int)(133 * hover + 83 * press), accent), S(1.4f)))
             {
-                using (var br = new LinearGradientBrush(r, Color.FromArgb(9, 21, 37), Color.FromArgb(6, 12, 21), 90f))
-                    g.FillPath(br, p);
-                using (var pen = new Pen(Color.FromArgb(100, 26, 62, 104), Math.Max(1f, S(1))))
-                    g.DrawPath(pen, p);
+                g.FillPath(fill, shape);
+                if (_prefs.GlowBorders) g.DrawPath(glow, shape);
+                g.DrawPath(outline, shape);
+                if (press > 0 && (id == "home:play" || id == "home:login"))
+                {
+                    var saved = g.Save();
+                    g.SetClip(shape, CombineMode.Intersect);
+                    float sweep = bounds.Width * 0.28f;
+                    var band = new RectangleF(bounds.Left - sweep + (bounds.Width + sweep) * (1 - press),
+                        bounds.Top, sweep, bounds.Height);
+                    using (var shine = new LinearGradientBrush(band, Color.Transparent, Color.Transparent, 0f))
+                    {
+                        shine.InterpolationColors = new ColorBlend
+                        {
+                            Colors = new[] { Color.Transparent, Color.FromArgb(100, accent), Color.Transparent },
+                            Positions = new[] { 0f, 0.5f, 1f }
+                        };
+                        g.FillRectangle(shine, band);
+                    }
+                    g.Restore(saved);
+                }
             }
+        }
 
-            float segW = r.Width / 3f;
-            for (int i = 0; i < 3; i++)
-            {
-                var seg = new RectangleF(r.X + segW * i, r.Y, segW, r.Height);
+        void PaintHomeOutline(Graphics g, int width, int height)
+        {
+            var edge = new RectangleF(S(1.5f), S(1.5f), width - S(3f), height - S(3f));
+            using (var shape = Theme.Round(edge, S(16f)))
+            using (var stroke = new LinearGradientBrush(edge, Color.FromArgb(42, 76, 111),
+                Color.FromArgb(3, 128, 218), 55f))
+            using (var outline = new Pen(stroke, S(1.4f)))
+                g.DrawPath(outline, shape);
+        }
 
-                if (i > 0)
-                    using (var pen = new Pen(Color.FromArgb(64, 30, 70, 118)))
-                        g.DrawLine(pen, seg.X, r.Y + S(15), seg.X, r.Bottom - S(15));
+        void PaintReferenceText(Graphics g, RectangleF bounds, string text, float size, Color background)
+        {
+            using (var fill = new SolidBrush(background))
+                g.FillRectangle(fill, bounds);
+            Theme.Text(g, text, UB(size), Theme.Ink, bounds);
+        }
 
-                Theme.Icon(g, icons[i], new RectangleF(seg.X + S(18), r.Y + (r.Height - S(20)) / 2f, S(20), S(20)),
-                    Theme.Alpha(accents[i], 220), 1.6f);
-
-                Theme.Text(g, labels[i], UB(6.8f), Color.FromArgb(124, 154, 192),
-                    new RectangleF(seg.X + S(50), r.Y + S(13), seg.Width - S(64), S(14)));
-                Theme.Text(g, values[i], UB(9.2f), Theme.Mix(accents[i], Theme.Ink, 0.62f),
-                    new RectangleF(seg.X + S(50), r.Y + S(29), seg.Width - S(64), S(22)));
-            }
+        void StartReferenceGame()
+        {
+            if (_login == null) StartLogin(false);
+            else LaunchGame();
         }
 
         void PaintLogin(Graphics g, RectangleF panel)
@@ -1231,7 +1329,7 @@ namespace FNHybrid
                 {
                     _profileOpen = false;
                     if (idx == 0) { _view = View.Home; OpenMini(MiniWindow.Kind.Console, r); }
-                    else if (idx == 1) { _view = View.Accounts; }
+                    else if (idx == 1) { OpenMini(MiniWindow.Kind.Account, r); }
                     else if (idx == 2) { _view = View.Home; OpenMini(MiniWindow.Kind.Custom, r); }
                     else { _view = View.Home; OpenMini(MiniWindow.Kind.Private, r); }
                     Invalidate();
@@ -1531,7 +1629,9 @@ namespace FNHybrid
             string id = hit.HasValue ? hit.Value.Id : null;
             if (id != _hot)
             {
+                _previousHot = _hot;
                 _hot = id;
+                _hoverChangedAt = Stopwatch.GetTimestamp();
                 Cursor = (id != null && id != "drag") ? Cursors.Hand
                        : (e.Y <= S(56) ? Cursors.SizeAll : Cursors.Default);
                 Invalidate();
@@ -1541,7 +1641,13 @@ namespace FNHybrid
         protected override void OnMouseLeave(EventArgs e)
         {
             base.OnMouseLeave(e);
-            if (_hot != null) { _hot = null; Invalidate(); }
+            if (_hot != null)
+            {
+                _previousHot = _hot;
+                _hot = null;
+                _hoverChangedAt = Stopwatch.GetTimestamp();
+                Invalidate();
+            }
         }
 
         protected override void OnMouseDown(MouseEventArgs e)
@@ -1552,6 +1658,12 @@ namespace FNHybrid
             var hit = FindHit(e.Location);
             if (hit.HasValue)
             {
+                if (_view == View.Home && hit.Value.Id != "drag" && hit.Value.Id != "backdrop")
+                {
+                    _clickedButton = hit.Value.Id;
+                    _clickedAt = Stopwatch.GetTimestamp();
+                    Invalidate();
+                }
                 if (hit.Value.Act != null) hit.Value.Act();
                 return;
             }
@@ -2093,7 +2205,7 @@ namespace FNHybrid
 
         void LaunchGame()
         {
-            if (_launching) return;
+            if (_launching || _privateBusy) return;
             // pas de session : on demande la connexion avant de lancer le jeu
             if (_login == null)
             {
@@ -2101,11 +2213,89 @@ namespace FNHybrid
                 return;
             }
 
+            if (GameLauncher.IsRunning())
+            {
+                Status(S("Ferme Fortnite avant de relancer dans le mode choisi.",
+                         "Close Fortnite before relaunching in the selected mode."));
+                Invalidate();
+                return;
+            }
+
             _launching = true;
+            ConsoleWindow.Say(S("Lancement de Fortnite…", "Launching Fortnite…"), ConsoleWindow.Kind.Go);
             Status(S("Préparation du lancement…", "Preparing launch…"));
+            // plus de fenêtre de chargement de l'app : le bouton tourne, puis
+            // l'animation se joue directement sur l'écran de démarrage de Fortnite
             Invalidate();
-            Action work = _privateOn ? (Action)DoLaunch : LaunchOnline;
-            Task.Run(work);
+            Action launch = _privateOn ? (Action)DoLaunch : LaunchOnline;
+            Task.Run(launch);
+        }
+
+        void EndLaunch()
+        {
+            _launching = false;
+            // Fortnite ouvert : le bouton passe tout de suite à « En cours »
+            _gameRunning = GameRunning();
+            // lancement terminé ou échoué : Fortnite retrouve ses images d'origine
+            Task.Run(new Action(GameSplash.Restore));
+            if (_launchSplash != null)
+            {
+                _launchSplash.Close();
+                _launchSplash = null;
+            }
+        }
+
+        void AwaitFortnite()
+        {
+            Ui(delegate
+            {
+                if (_launchSplash != null) _launchSplash.WaitingForGame();
+            });
+            // animation sur l'écran de démarrage de Fortnite (logo anti-cheat cassé)
+            if (_prefs.Animations)
+                Task.Run(delegate { EacBreakOverlay.WatchAndPlay(Ui, 150); });
+
+            try
+            {
+                // dès que Fortnite (ou son anti-cheat) démarre, on retire la petite
+                // fenêtre de l'app : l'écran de démarrage du jeu affiche déjà X.HYBRID
+                var wait = Stopwatch.StartNew();
+                while (wait.Elapsed.TotalSeconds < 150 && !LaunchSplash.FindGameWindows().Running && !GameRunning())
+                    System.Threading.Thread.Sleep(250);
+                Ui(delegate
+                {
+                    if (_launchSplash != null) { _launchSplash.Close(); _launchSplash = null; }
+                });
+
+                if (!WaitGameStart(150))
+                    throw new TimeoutException(S("Fortnite ne s’est pas ouvert. Vérifie le lanceur Epic Games.",
+                        "Fortnite did not start. Check the Epic Games Launcher."));
+                WaitGameWindow();
+            }
+            finally
+            {
+                // le jeu a lu son image de démarrage : on remet les fichiers d'origine
+                GameSplash.Restore();
+            }
+        }
+
+        // le bouton reste en chargement jusqu'à l'ouverture de la vraie fenêtre du jeu
+        void WaitGameWindow()
+        {
+            var watch = Stopwatch.StartNew();
+            double mainSince = -1;
+            while (watch.Elapsed.TotalSeconds < 180)
+            {
+                var game = LaunchSplash.FindGameWindows();
+                if (!game.Running) return;
+                if (game.MainVisible)
+                {
+                    if (mainSince < 0) mainSince = watch.Elapsed.TotalSeconds;
+                    // le jeu est ouvert : plus de splash, ou fenêtre principale stable
+                    if (!game.Splash.HasValue || watch.Elapsed.TotalSeconds - mainSince > 4) return;
+                }
+                System.Threading.Thread.Sleep(game.Splash.HasValue ? 60 : 250);
+            }
         }
 
         // Mode en ligne : les serveurs Epic sont utilises tels quels, le jeu peut
@@ -2116,9 +2306,8 @@ namespace FNHybrid
             try
             {
                 Log(S("Mode en ligne : serveur privé et proxy ignorés.", "Online mode: private server and proxy bypassed."));
-                try { if (Redirect.IsApplied(_config)) Redirect.Remove(_config); } catch (Exception) { }
-                try { Redirect.RepairDnsCache(_config); } catch (Exception) { }
-                try { ProxyManager.DisableSystemProxy(); } catch (Exception) { }
+                if (Redirect.IsApplied(_config)) Redirect.Remove(_config);
+                else Redirect.RepairDnsCache(_config);
                 try { ProxyManager.Stop(); } catch (Exception) { }
                 try { ProxyManager.CleanResidue(); } catch (Exception) { }
                 if (ServerManager.IsRunning())
@@ -2131,11 +2320,13 @@ namespace FNHybrid
                 Log(S("Lancement de Fortnite avec ton compte Epic Games…",
                       "Launching Fortnite with your Epic Games account…"));
                 GameLauncher.LaunchViaEgs(_config, false);
-                Log(S("Partie privée en solo : Découvrir → Créatif → lance ton île, personne ne rejoint.",
-                      "Private solo game: Discover → Creative → launch your island, nobody joins."));
+                AwaitFortnite();
+                Log(S("Dans le lobby, ouvre le menu Social pour rejoindre tes amis Epic.",
+                      "In the lobby, open the Social menu to join your Epic friends."));
                 Ui(delegate
                 {
-                    _launching = false;
+                    _privateOn = false;
+                    EndLaunch();
                     Status(S("Fortnite lancé sur les serveurs Epic (parties réelles).",
                              "Fortnite launched on Epic servers (real matches)."));
                     Invalidate();
@@ -2148,7 +2339,7 @@ namespace FNHybrid
                 Log("ERREUR lancement en ligne : " + ex.Message);
                 Ui(delegate
                 {
-                    _launching = false;
+                    EndLaunch();
                     Status(S("Lancement en ligne impossible (voir la console).", "Online launch failed (see the console)."));
                     Invalidate();
                 });
@@ -2213,7 +2404,6 @@ namespace FNHybrid
                         + S("Ferme les autres fenêtres X.HYBRID V1 puis réessaie.", "Close the other X.HYBRID V1 windows and try again."));
 
                 Log(S("Proxy local prêt sur le port ", "Local proxy ready on port ") + ProxyManager.ProxyPort + ".");
-                Task.Run(new Action(WatchGameSession));
 
                 var url = GameLauncher.FindEgsLaunchUrl(_config);
                 if (string.IsNullOrEmpty(_config.EgsLaunchUrl))
@@ -2225,11 +2415,13 @@ namespace FNHybrid
                 Log(S("Demande de lancement du jeu via Epic Games Launcher…",
                       "Requesting the game via the Epic Games Launcher…"));
                 GameLauncher.LaunchViaEgs(_config, true);
+                Task.Run(new Action(WatchGameSession));
                 Log(S("Epic Games Launcher a reçu la demande ! Fortnite va s'ouvrir sur ton serveur privé.",
                       "Epic Games Launcher received the request! Fortnite will open on your private server."));
+                AwaitFortnite();
                 Ui(delegate
                 {
-                    _launching = false;
+                    EndLaunch();
                     Status(S("Fortnite lancé via Epic Games Launcher.", "Fortnite launched via the Epic Games Launcher."));
                     Invalidate();
                 });
@@ -2241,7 +2433,7 @@ namespace FNHybrid
                 Log("ERREUR lancement : " + ex.Message);
                 Ui(delegate
                 {
-                    _launching = false;
+                    EndLaunch();
                     Status(S("Erreur au lancement (voir la console).", "Launch error (see the console)."));
                     Invalidate();
                 });
@@ -2339,10 +2531,12 @@ namespace FNHybrid
                     else
                     {
                         Redirect.Apply(_config);
+                        // le proxy écoute, mais le réglage système n'est activé qu'au
+                        // lancement de Fortnite (et retiré à sa fermeture) : le reste
+                        // du PC ne passe plus par X.HYBRID en dehors des parties.
                         ProxyManager.Start();
-                        ProxyManager.EnableSystemProxy();
-                        Log(S("Mode privé actif : redirection hosts + proxy SSL global sur le port ",
-                              "Private mode on: hosts redirect + global SSL proxy on port ") + ProxyManager.ProxyPort + ".");
+                        Log(S("Mode privé actif : redirection hosts + proxy SSL prêt sur le port ",
+                              "Private mode on: hosts redirect + SSL proxy ready on port ") + ProxyManager.ProxyPort + ".");
                         Ui(delegate { _privateOn = true; _privateBusy = false; Status(S("Mode privé activé.", "Private mode enabled.")); Invalidate(); });
                     }
                 }
@@ -2447,6 +2641,7 @@ namespace FNHybrid
                     ProxyManager.CleanResidue();
                 }
                 catch (Exception) { }
+                _gameRunning = false;   // le bouton repasse à « Jouer »
                 Log(S("Fortnite fermé : réglages réseaux remis comme avant.", "Fortnite closed: network settings restored."));
                 Ui(Invalidate);
             }
@@ -2529,7 +2724,7 @@ namespace FNHybrid
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            if (!_updating && _prefs.ConfirmCloseInGame && GameRunning())
+            if (!_closeDrained && !_updating && _prefs.ConfirmCloseInGame && GameRunning())
             {
                 var res = MessageBox.Show(this,
                     S("Fortnite est en cours de partie.\nFermer X.HYBRID V1 coupe le proxy et le serveur privé.\n\nFermer quand même ?",
@@ -2538,6 +2733,29 @@ namespace FNHybrid
                 if (res != DialogResult.Yes)
                 {
                     e.Cancel = true;
+                    return;
+                }
+            }
+
+            // Fermeture douce : on rend d'abord internet direct à Windows, puis on
+            // laisse finir les connexions qui passent encore par le proxy (sinon
+            // les autres apps voient « Échec de la requête » au moment de fermer).
+            if (!_closeDrained)
+            {
+                _closeDrained = true;
+                bool routing = ProxyManager.IsOurs();
+                try { ProxyManager.ReleaseForExit(); } catch (Exception) { }
+                if (routing || HybridProxy.ActiveConnections > 0)
+                {
+                    e.Cancel = true;
+                    Hide();
+                    Task.Run(delegate
+                    {
+                        var wait = Stopwatch.StartNew();
+                        while (HybridProxy.ActiveConnections > 0 && wait.Elapsed.TotalSeconds < 10)
+                            System.Threading.Thread.Sleep(200);
+                        Ui(Close);
+                    });
                     return;
                 }
             }
@@ -2563,12 +2781,17 @@ namespace FNHybrid
 
             try
             {
-                if (!GameRunning()) ProxyManager.DisableSystemProxy();
+                // le proxy s'arrête avec l'app : on ne laisse jamais Windows pointer
+                // vers un port mort (sinon plus d'internet sur tout le PC)
+                ProxyManager.ReleaseForExit();
             }
             catch (Exception) { }
 
             foreach (var f in _fonts.Values) { try { f.Dispose(); } catch (Exception) { } }
             _fonts.Clear();
+
+            // la console se ferme avec l'application
+            ConsoleWindow.CloseFromApp();
 
             base.OnFormClosing(e);
         }
@@ -2824,6 +3047,15 @@ namespace FNHybrid
                     _login.AccountId = "0e3c9a1f6d4b47f6a9f4f2a1b7c3d5e9";
                     _login.DisplayName = "Solo Servat";
                     _view = View.Home;
+                    break;
+                case "launching":
+                case "ingame":
+                    _login = new EpicLoginResult();
+                    _login.AccountId = "0e3c9a1f6d4b47f6a9f4f2a1b7c3d5e9";
+                    _login.DisplayName = "Solo Servat";
+                    _view = View.Home;
+                    _launching = head == "launching";
+                    _gameRunning = head == "ingame";
                     break;
                 case "profile":
                     _login = new EpicLoginResult();

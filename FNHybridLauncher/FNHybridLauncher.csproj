@@ -34,6 +34,9 @@
   </Target>
 
   <ItemGroup>
+    <EmbeddedResource Include="Assets\LobbyHome.png" LogicalName="LobbyHome.png" />
+    <EmbeddedResource Include="Assets\LobbyHero.jpg" LogicalName="LobbyHero.jpg" />
+    <EmbeddedResource Include="Assets\EacLogo.png" LogicalName="EacLogo.png" />
     <Reference Include="System.Web.Extensions" />
     <Reference Include="System.Net.Http" />
     <Reference Include="System.Security" />

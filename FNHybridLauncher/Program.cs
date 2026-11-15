@@ -82,6 +82,11 @@ namespace FNHybrid
 
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+
+            // console flottante (noir / bleu, facon CMD) : s'ouvre avec l'app et
+            // affiche en direct tout ce qui se passe (serveur, proxy, Fortnite).
+            ConsoleWindow.ShowConsole();
+
             Application.Run(new MainForm());
 
             GC.KeepAlive(_instance);

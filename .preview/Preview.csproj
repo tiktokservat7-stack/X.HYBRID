@@ -12,6 +12,9 @@
   <ItemGroup>
     <Compile Include="../FNHybridLauncher/*.cs" Exclude="../FNHybridLauncher/Program.cs" />
     <Compile Include="PreviewProgram.cs" />
+    <EmbeddedResource Include="../FNHybridLauncher/Assets/LobbyHome.png" LogicalName="LobbyHome.png" />
+    <EmbeddedResource Include="../FNHybridLauncher/Assets/LobbyHero.jpg" LogicalName="LobbyHero.jpg" />
+    <EmbeddedResource Include="../FNHybridLauncher/Assets/EacLogo.png" LogicalName="EacLogo.png" />
   </ItemGroup>
   <ItemGroup Condition="Exists('../FNHybridLauncher/payload.zip')">
     <EmbeddedResource Include="../FNHybridLauncher/payload.zip" LogicalName="payload.zip" />

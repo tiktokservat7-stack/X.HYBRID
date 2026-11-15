@@ -51,6 +51,8 @@ namespace FNHybrid
                      ControlStyles.OptimizedDoubleBuffer, true);
 
             ClientSize = new Size(owner.Sc(BaseWidth()), owner.Sc(BaseHeight()));
+            using (var outline = Theme.Round(ClientRectangle, Sc(16)))
+                Region = new Region(outline);
             Text = "X.HYBRID V1 · " + Title2();
 
             if (_kind == Kind.Custom) BuildInputs();
@@ -79,7 +81,7 @@ namespace FNHybrid
                 case Kind.Console: return 390;
                 case Kind.Account: return 300;
                 case Kind.Custom: return 430;
-                default: return 330;
+                default: return 270;
             }
         }
 
@@ -155,13 +157,14 @@ namespace FNHybrid
             if (W < 40 || H < 40) return;
 
             var frame = new RectangleF(Sc(1.5f), Sc(1.5f), W - Sc(3f), H - Sc(3f));
-            using (var path = Theme.Chamfer(frame, Sc(14), Sc(22), Sc(22), Sc(14)))
+            using (var path = Theme.Round(frame, Sc(15)))
             {
                 if (_owner.Prefs.GlowBorders)
                     using (var glow = new Pen(Color.FromArgb(30, Theme.Electric), Sc(7)))
                         g.DrawPath(glow, path);
                 Theme.FillVertical(g, path, Color.FromArgb(9, 18, 31), Color.FromArgb(4, 7, 12));
-                using (var pen = new Pen(Color.FromArgb(235, 0, 122, 240), Math.Max(1f, Sc(1.3f))))
+                using (var stroke = new LinearGradientBrush(frame, Theme.Bright, Theme.BorderHi, 65f))
+                using (var pen = new Pen(stroke, Math.Max(1f, Sc(1.3f))))
                     g.DrawPath(pen, path);
             }
 
@@ -174,7 +177,7 @@ namespace FNHybrid
                 using (var br = new SolidBrush(Color.FromArgb(24, 54, 98))) g.FillPath(br, p);
                 using (var pen = new Pen(Color.FromArgb(185, 72, 162, 255), Math.Max(1f, Sc(1)))) g.DrawPath(pen, p);
             }
-            Theme.Text(g, "V1", FB(6.6f), Color.FromArgb(178, 220, 255), badge,
+            Theme.Text(g, AppInfo.Badge, FB(6.6f), Color.FromArgb(178, 220, 255), badge,
                 StringAlignment.Center, StringAlignment.Center, false);
 
             float kindX = badge.Right + Sc(11);
@@ -603,10 +606,10 @@ namespace FNHybrid
             bool on = _owner.IsPrivateOn;
 
             var head = new RectangleF(body.X, body.Y, body.Width, Sc(64));
-            using (var p = Theme.Round(head, Sc(8)))
+            using (var p = Theme.Round(head, Sc(12)))
             {
                 using (var br = new LinearGradientBrush(head,
-                    on ? Color.FromArgb(20, 56, 108) : Color.FromArgb(9, 18, 30),
+                    on ? Color.FromArgb(_hot == "private" ? 31 : 20, 56, 108) : Color.FromArgb(9, 18, 30),
                     Color.FromArgb(6, 12, 21), 90f))
                     g.FillPath(br, p);
                 using (var pen = new Pen(Color.FromArgb(on ? 220 : 130, on ? 0 : 30, on ? 150 : 70, on ? 255 : 120)))
@@ -632,7 +635,8 @@ namespace FNHybrid
             }
             using (var br = new SolidBrush(on ? Color.White : Color.FromArgb(126, 150, 178)))
                 g.FillEllipse(br, on ? sw.Right - Sc(20) : sw.X + Sc(4), sw.Y + Sc(3), Sc(16), Sc(16));
-            Zone_(head, "private", delegate { _owner.MiniTogglePrivate(); Invalidate(); });
+            if (!_owner.IsBusy)
+                Zone_(head, "private", delegate { _owner.MiniTogglePrivate(); Invalidate(); });
 
             float y = head.Bottom + Sc(12);
             y = Status(g, body, y, MainForm.T("Serveur privé", "Private server"),
