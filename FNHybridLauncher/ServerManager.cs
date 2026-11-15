@@ -13,6 +13,16 @@ namespace FNHybrid
         const int Port = 80;
         static Process _proc;
 
+        // Watchdog : si le serveur (node) s'arrete tout seul alors qu'il devrait
+        // tourner, on le relance automatiquement. C'est ce qui corrige le « serveur
+        // actif 5 s puis arrete » constate chez certains joueurs.
+        static volatile bool _wantRunning;
+        static int _autoRestarts;
+        static DateTime _startedAt;
+        static readonly object _startLock = new object();
+        static AppConfig _cfg;
+        static Action<string> _log;
+
         public static bool IsRunning()
         {
             try
@@ -102,6 +112,21 @@ namespace FNHybrid
 
         public static void Start(AppConfig cfg, Action<string> log, out Process proc)
         {
+            lock (_startLock)
+            {
+                _cfg = cfg;
+                _log = log;
+                _wantRunning = true;         // le serveur DOIT tourner : le watchdog veille
+
+                // deja demarre : on ne relance pas un 2e node (sinon conflit port 80)
+                if (_proc != null && !_proc.HasExited) { proc = _proc; return; }
+
+                StartInternal(cfg, log, out proc);
+            }
+        }
+
+        static void StartInternal(AppConfig cfg, Action<string> log, out Process proc)
+        {
             var dir = cfg.ServerDir;
             if (!IsUsableServerDir(dir))
                 throw new Exception(T("Le dossier du serveur privé est incomplet : ",
@@ -127,18 +152,58 @@ namespace FNHybrid
             var p = Process.Start(psi);
             _proc = p;
             proc = p;
+            _startedAt = DateTime.UtcNow;
 
             p.OutputDataReceived += (s, e) => { if (e.Data != null) log("[serveur] " + e.Data); };
             p.ErrorDataReceived += (s, e) => { if (e.Data != null) log("[serveur] " + e.Data); };
             p.EnableRaisingEvents = true;
+            p.Exited += OnServerExited;
             p.BeginOutputReadLine();
             p.BeginErrorReadLine();
         }
 
+        // Le node s'est arrete : si on voulait qu'il tourne, on le relance.
+        static void OnServerExited(object sender, EventArgs e)
+        {
+            if (!_wantRunning) return;                 // arret volontaire (Stop)
+
+            double uptime = (DateTime.UtcNow - _startedAt).TotalSeconds;
+            if (uptime > 25) _autoRestarts = 0;        // avait bien tenu : compteur remis a zero
+
+            if (_autoRestarts >= 6)
+            {
+                if (_log != null) _log(T("Serveur : trop d'arrêts, redémarrage auto suspendu (le port 80 est peut-être pris par une autre app).",
+                                         "Server: too many crashes, auto-restart paused (port 80 may be used by another app)."));
+                return;
+            }
+            _autoRestarts++;
+
+            System.Threading.Thread.Sleep(1200);
+            if (!_wantRunning) return;
+            lock (_startLock)
+            {
+                if (!_wantRunning || (_proc != null && !_proc.HasExited)) return;
+                try
+                {
+                    if (_log != null) _log(T("Serveur arrêté tout seul : redémarrage automatique…",
+                                             "Server stopped by itself: restarting automatically…"));
+                    KillPortOwner();                   // libere le port 80 s'il reste un vieux node
+                    Process np;
+                    StartInternal(_cfg, _log, out np);
+                }
+                catch (Exception ex)
+                {
+                    if (_log != null) _log(T("Redémarrage serveur impossible : ", "Server restart failed: ") + ex.Message);
+                }
+            }
+        }
+
         public static void Stop()
         {
+            _wantRunning = false;            // arret volontaire : le watchdog ne relance pas
             if (_proc != null && !_proc.HasExited)
             {
+                try { _proc.Exited -= OnServerExited; } catch { }
                 try { _proc.Kill(); } catch { }
             }
             _proc = null;
