@@ -142,16 +142,14 @@ namespace FNHybrid
                 }
                 if (_prefs.OpenConsoleOnStart) OpenMini(MiniWindow.Kind.Console, DefaultAnchor());
 
-                // le serveur privé doit tourner même sans session : le jeu en a besoin.
+                // le serveur privé doit tourner DÈS le lancement, même si le mode
+                // privé est inactif : sans ça, un nouveau joueur (redirection hosts
+                // pas encore posée -> _privateOn = false) n'avait jamais de serveur.
                 // Premier lancement : la copie embarquée du serveur et le moteur Node.js
                 // s'installent ici (une seule fois), le joueur n'a rien à préparer.
-                if (_prefs.AutoStartServer && !ServerManager.IsRunning())
-                    Task.Run(delegate
-                    {
-                        if (Environment.GetEnvironmentVariable("XHYBRID_PREVIEW") == null)
-                            EnsureBundledServer();
-                        PrepBackend();
-                    });
+                if (_prefs.AutoStartServer && !ServerManager.IsRunning()
+                    && Environment.GetEnvironmentVariable("XHYBRID_PREVIEW") == null)
+                    Task.Run(new Action(EnsureServerRunning));
             };
 
             var pv = Environment.GetEnvironmentVariable("XHYBRID_PREVIEW");
@@ -2061,6 +2059,71 @@ namespace FNHybrid
         // une seule synchro cosmétiques à la fois (démarrage + lancement)
         readonly object _cosmeticsLock = new object();
         bool _backendBusy;
+
+        // Démarre le serveur privé (port 80) dès le lancement de l'app, SANS exiger
+        // le mode privé ni le proxy. C'est ce qui manquait aux nouveaux joueurs :
+        // chez eux le mode privé est inactif au départ, donc PrepBackend sortait
+        // aussitôt et le serveur ne démarrait jamais.
+        void EnsureServerRunning()
+        {
+            try
+            {
+                EnsureBundledServer();
+
+                var dir = ResolveServerDir();
+                if (dir == null)
+                {
+                    Log(S("Serveur introuvable : la copie embarquée n'a pas pu s'installer.",
+                          "Server not found: the bundled copy could not install."));
+                    ConsoleWindow.Say(S("Serveur privé indisponible.", "Private server unavailable."), ConsoleWindow.Kind.Warn);
+                    return;
+                }
+                if (_config.ServerDir != dir) { _config.ServerDir = dir; _config.Save(); }
+
+                if (ServerManager.IsRunning())
+                {
+                    Ui(delegate { _serverRunning = true; Invalidate(); });
+                    ConsoleWindow.Say(S("Serveur privé prêt.", "Private server ready."), ConsoleWindow.Kind.Ok);
+                    return;
+                }
+
+                if (!ServerManager.NodeAvailable(_config))
+                {
+                    Log(S("Moteur Node.js introuvable : relance X.HYBRID (il est inclus dans l'exe).",
+                          "Node.js engine not found: restart X.HYBRID (it is bundled in the exe)."));
+                    ConsoleWindow.Say(S("Serveur privé : moteur manquant.", "Private server: engine missing."), ConsoleWindow.Kind.Warn);
+                    return;
+                }
+
+                try
+                {
+                    Process p;
+                    ServerManager.Start(_config, Log, out p);
+                }
+                catch (Exception ex)
+                {
+                    // port 80 pris par un ancien node X.HYBRID : on le libère et on réessaie une fois.
+                    Log(S("Démarrage serveur : ", "Server start: ") + ex.Message + S(" — nouvelle tentative…", " — retrying…"));
+                    try { ServerManager.Stop(); } catch (Exception) { }
+                    try { Process p2; ServerManager.Start(_config, Log, out p2); }
+                    catch (Exception ex2) { Log(S("Démarrage serveur (2e essai) : ", "Server start (2nd try): ") + ex2.Message); }
+                }
+
+                ServerManager.WaitReady(15);
+                bool ok = ServerManager.IsRunning();
+                Ui(delegate { _serverRunning = ok; Invalidate(); });
+                ConsoleWindow.Say(ok
+                    ? S("Serveur privé démarré (port 80).", "Private server started (port 80).")
+                    : S("Serveur privé : échec (le port 80 est peut-être occupé par une autre app).",
+                        "Private server: failed (port 80 may be used by another app)."),
+                    ok ? ConsoleWindow.Kind.Ok : ConsoleWindow.Kind.Warn);
+            }
+            catch (Exception ex)
+            {
+                Log(S("Serveur au lancement : ", "Server at launch: ") + ex.Message);
+                ConsoleWindow.Say(S("Serveur privé : erreur au démarrage.", "Private server: start error."), ConsoleWindow.Kind.Warn);
+            }
+        }
 
         void PrepBackend()
         {

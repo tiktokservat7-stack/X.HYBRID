@@ -7,8 +7,8 @@ namespace FNHybrid
     {
         public const string Name = "X.HYBRID V1";
         public const string ExeName = "X.HYBRID V1.exe";
-        public const string Version = "1.4";
-        public const string VersionTag = "v1.4.0";
+        public const string Version = "1.5";
+        public const string VersionTag = "v1.5.0";
 
         public static string Badge { get { return "V" + Version; } }
     }
