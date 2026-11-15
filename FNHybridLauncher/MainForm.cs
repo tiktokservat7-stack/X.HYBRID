@@ -47,6 +47,8 @@ namespace FNHybrid
         bool _serverRunning;
         volatile bool _gameRunning;   // Fortnite ouvert : le bouton affiche « En cours »
         bool _privateOn;
+        volatile bool _wantPrivate;   // le joueur veut le mode privé : on le maintient actif
+        bool _healLogged;             // évite de spammer le journal quand la redirection est rejouée
         bool _polling;
         bool _restoring;
         bool _updating;
@@ -254,6 +256,34 @@ namespace FNHybrid
                 bool gameNow = GameRunning();
                 try { run = ServerManager.IsRunning(); } catch (Exception) { }
                 try { priv = Redirect.IsApplied(cfg); } catch (Exception) { }
+
+                // Auto-réparation du mode privé : si on veut le mode privé mais que la
+                // redirection a disparu (souvent Windows Defender / un antivirus qui
+                // réécrit le fichier hosts), on la repose tout de suite. C'est ce qui
+                // empêche le mode privé de « se désactiver tout seul ».
+                if (_wantPrivate && !priv)
+                {
+                    try
+                    {
+                        Redirect.Apply(cfg);
+                        priv = Redirect.IsApplied(cfg);
+                        if (priv && !_healLogged)
+                        {
+                            _healLogged = true;
+                            FileLog.Write("Mode privé : redirection re-posée (elle avait été retirée, antivirus ?).");
+                        }
+                        if (priv) try { string perr; ProxyManager.EnsureStarted(out perr); } catch (Exception) { }
+                    }
+                    catch (Exception ex)
+                    {
+                        if (!_healLogged)
+                        {
+                            _healLogged = true;
+                            FileLog.Write("Mode privé : impossible de re-poser la redirection (hosts bloqué ? antivirus) : " + ex.Message);
+                        }
+                    }
+                }
+                else if (priv) { _healLogged = false; }
 
                 // le proxy local doit toujours écouter : sinon on ne laisse pas
                 // un réglage système pointant vers un port mort.
@@ -2146,6 +2176,7 @@ namespace FNHybrid
                           "Private mode enabled by default (hosts redirect applied)."));
                 }
                 try { ProxyManager.Start(); } catch (Exception) { }
+                _wantPrivate = true;
                 Ui(delegate { _privateOn = true; Invalidate(); });
                 ConsoleWindow.Say(S("Mode privé activé.", "Private mode enabled."), ConsoleWindow.Kind.Ok);
             }
@@ -2400,6 +2431,7 @@ namespace FNHybrid
             {
                 Log(S("Mode en ligne : proxy ignoré. Le serveur privé reste allumé.",
                       "Online mode: proxy bypassed. The private server stays on."));
+                _wantPrivate = false;   // partie en ligne : on ne repose pas la redirection
                 if (Redirect.IsApplied(_config)) Redirect.Remove(_config);
                 else Redirect.RepairDnsCache(_config);
                 try { ProxyManager.Stop(); } catch (Exception) { }
@@ -2613,6 +2645,7 @@ namespace FNHybrid
 
                     if (applied)
                     {
+                        _wantPrivate = false;   // l'utilisateur coupe lui-même : on ne repose plus la redirection
                         Redirect.Remove(_config);
                         ProxyManager.Stop();
                         ProxyManager.CleanResidue();
@@ -2622,6 +2655,8 @@ namespace FNHybrid
                     else
                     {
                         Redirect.Apply(_config);
+                        _wantPrivate = true;   // on veut le mode privé : le poll le maintiendra
+                        _healLogged = false;
                         // le proxy écoute, mais le réglage système n'est activé qu'au
                         // lancement de Fortnite (et retiré à sa fermeture) : le reste
                         // du PC ne passe plus par X.HYBRID en dehors des parties.
