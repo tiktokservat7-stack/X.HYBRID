@@ -5,13 +5,20 @@ namespace FNHybrid
 {
     public class AppConfig
     {
+        // Valeurs par defaut du mode prive. SANS elles, un nouveau joueur avait
+        // RedirectHost = null : la redirection hosts ecrite etait vide et le mode
+        // prive ne marchait jamais. On les applique a chaque chargement (ApplyDefaults),
+        // ce qui repare aussi les installations qui ont deja "RedirectHost": null.
+        public const string DefaultServerIp = "127.0.0.1";
+        public const string DefaultRedirectHost = "fortnite-public-service-prod11.ol.epicgames.com";
+
         public string FortniteExe { get; set; }
         public string ServerDir { get; set; }
         public string NodeExe { get; set; }
-        public string ServerIp { get; set; }
+        public string ServerIp { get; set; } = DefaultServerIp;
 
         // Domaine du service de jeu que le privé remplace : redirigé via hosts vers ServerIp (port 80)
-        public string RedirectHost { get; set; }
+        public string RedirectHost { get; set; } = DefaultRedirectHost;
 
         // URL protocole com.epicgames.launcher://... du raccourci Fortnite (lecture auto du Bureau)
         public string EgsLaunchUrl { get; set; }
@@ -38,20 +45,29 @@ namespace FNHybrid
 
         public static AppConfig Load()
         {
+            AppConfig c = null;
             try
             {
                 var path = GetPath();
                 if (File.Exists(path))
-                {
-                    var c = JsonH.Parse<AppConfig>(File.ReadAllText(path));
-                    if (c != null) return c;
-                }
+                    c = JsonH.Parse<AppConfig>(File.ReadAllText(path));
             }
             catch (Exception)
             {
                 // config corrompue → défauts
             }
-            return new AppConfig();
+            if (c == null) c = new AppConfig();
+            c.ApplyDefaults();
+            return c;
+        }
+
+        // Remplit les champs vides (anciennes configs avec "RedirectHost": null) :
+        // c'est ce qui permet au mode privé de marcher partout, pas seulement sur le
+        // PC d'origine.
+        public void ApplyDefaults()
+        {
+            if (string.IsNullOrWhiteSpace(ServerIp)) ServerIp = DefaultServerIp;
+            if (string.IsNullOrWhiteSpace(RedirectHost)) RedirectHost = DefaultRedirectHost;
         }
 
         public void Save()
