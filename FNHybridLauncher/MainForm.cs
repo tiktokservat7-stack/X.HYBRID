@@ -2368,17 +2368,15 @@ namespace FNHybrid
         {
             try
             {
-                Log(S("Mode en ligne : serveur privé et proxy ignorés.", "Online mode: private server and proxy bypassed."));
+                Log(S("Mode en ligne : proxy ignoré. Le serveur privé reste allumé.",
+                      "Online mode: proxy bypassed. The private server stays on."));
                 if (Redirect.IsApplied(_config)) Redirect.Remove(_config);
                 else Redirect.RepairDnsCache(_config);
                 try { ProxyManager.Stop(); } catch (Exception) { }
                 try { ProxyManager.CleanResidue(); } catch (Exception) { }
-                if (ServerManager.IsRunning())
-                {
-                    try { ServerManager.Stop(); Log(S("Serveur privé arrêté : il n'est pas utilisé en ligne.",
-                                                    "Private server stopped: not used online.")); }
-                    catch (Exception) { }
-                }
+                // on NE coupe plus le serveur privé en ligne : il sert le casier et la
+                // boutique, et l'utilisateur veut qu'il reste toujours actif. La
+                // redirection hosts étant retirée, le jeu en ligne utilise bien Epic.
 
                 Log(S("Lancement de Fortnite avec ton compte Epic Games…",
                       "Launching Fortnite with your Epic Games account…"));
