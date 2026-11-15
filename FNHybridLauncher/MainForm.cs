@@ -2117,11 +2117,41 @@ namespace FNHybrid
                     : S("Serveur privé : échec (le port 80 est peut-être occupé par une autre app).",
                         "Private server: failed (port 80 may be used by another app)."),
                     ok ? ConsoleWindow.Kind.Ok : ConsoleWindow.Kind.Warn);
+
+                // le mode privé doit être actif par défaut : on pose la redirection
+                // hosts et on démarre le proxy dès le lancement de l'app. On ne le
+                // fait que si le serveur tourne : sinon la redirection enverrait Epic
+                // vers un port 80 mort et casserait la connexion.
+                if (ok) EnablePrivateModeAtStartup();
             }
             catch (Exception ex)
             {
                 Log(S("Serveur au lancement : ", "Server at launch: ") + ex.Message);
                 ConsoleWindow.Say(S("Serveur privé : erreur au démarrage.", "Private server: start error."), ConsoleWindow.Kind.Warn);
+            }
+        }
+
+        // Active le mode privé automatiquement au lancement (redirection hosts +
+        // proxy), pour que « Mode privé » soit toujours actif comme le veut le joueur.
+        void EnablePrivateModeAtStartup()
+        {
+            try
+            {
+                bool applied;
+                try { applied = Redirect.IsApplied(_config); } catch (Exception) { applied = false; }
+                if (!applied)
+                {
+                    Redirect.Apply(_config);
+                    Log(S("Mode privé activé par défaut (redirection hosts posée).",
+                          "Private mode enabled by default (hosts redirect applied)."));
+                }
+                try { ProxyManager.Start(); } catch (Exception) { }
+                Ui(delegate { _privateOn = true; Invalidate(); });
+                ConsoleWindow.Say(S("Mode privé activé.", "Private mode enabled."), ConsoleWindow.Kind.Ok);
+            }
+            catch (Exception ex)
+            {
+                Log(S("Mode privé au démarrage : ", "Private mode at startup: ") + ex.Message);
             }
         }
 
